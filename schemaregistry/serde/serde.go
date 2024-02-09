@@ -20,6 +20,9 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
+	"log"
+	"reflect"
+	"strings"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry"
 )
@@ -41,8 +44,35 @@ const (
 	DisableValidation = false
 )
 
-// magicByte is prepended to the serialized payload
-const magicByte byte = 0x0
+// RuleMode represents the rule mode
+type RuleMode = int
+
+const (
+	// Upgrade denotes upgrade mode
+	Upgrade = 1
+	// Downgrade denotes downgrade mode
+	Downgrade = 2
+	// UpDown denotes upgrade/downgrade mode
+	UpDown = 3
+	// Write denotes write mode
+	Write = 4
+	// Read denotes read mode
+	Read = 5
+	// WriteRead denotes write/read mode
+	WriteRead = 6
+)
+
+var modes = map[string]RuleMode{
+	"UPGRADE":   Upgrade,
+	"DOWNGRADE": Downgrade,
+	"UPDOWN":    UpDown,
+	"WRITE":     Write,
+	"READ":      Read,
+	"WRITEREAD": WriteRead,
+}
+
+// MagicByte is prepended to the serialized payload
+const MagicByte byte = 0x0
 
 // MessageFactory is a factory function, which should return a pointer to
 // an instance into which we will unmarshal wire data.
@@ -76,6 +106,8 @@ type Serde struct {
 	Client              schemaregistry.Client
 	SerdeType           Type
 	SubjectNameStrategy SubjectNameStrategyFunc
+	RuleExecutors       map[string]RuleExecutor
+	RuleActions         map[string]RuleAction
 }
 
 // BaseSerializer represents basic serializer info
@@ -91,6 +123,218 @@ type BaseDeserializer struct {
 	MessageFactory MessageFactory
 }
 
+// RuleContext represents a rule context
+type RuleContext struct {
+	Source        *schemaregistry.SchemaInfo
+	Target        *schemaregistry.SchemaInfo
+	Subject       string
+	Topic         string
+	IsKey         bool
+	RuleMode      RuleMode
+	Rule          *schemaregistry.Rule
+	Index         int
+	Rules         []schemaregistry.Rule
+	fieldContexts []FieldContext
+}
+
+func (r *RuleContext) GetParameter(name string) *string {
+	params := r.Rule.Params
+	value, ok := params[name]
+	if ok {
+		return &value
+	}
+	metadata := r.Target.Metadata
+	if metadata != nil {
+		value, ok = metadata.Properties[name]
+		if ok {
+			return &value
+		}
+	}
+	return nil
+}
+
+func (r *RuleContext) CurrentField() *FieldContext {
+	size := len(r.fieldContexts)
+	if size == 0 {
+		return nil
+	}
+	return &r.fieldContexts[size-1]
+}
+
+func (r *RuleContext) EnterField(containingMessage interface{}, fullName string,
+	name string, fieldType FieldType, tags []string) (FieldContext, bool) {
+	allTags := make(map[string]bool)
+	for _, v := range tags {
+		allTags[v] = true
+	}
+	for k, v := range r.GetTags(fullName) {
+		allTags[k] = v
+	}
+	fieldContext := FieldContext{
+		ContainingMessage: containingMessage,
+		FullName:          fullName,
+		Name:              name,
+		Type:              fieldType,
+		Tags:              allTags,
+	}
+	r.fieldContexts = append(r.fieldContexts, fieldContext)
+	return fieldContext, true
+}
+
+func (r *RuleContext) GetTags(fullName string) map[string]bool {
+	tags := make(map[string]bool)
+	metadata := r.Target.Metadata
+	if metadata != nil && metadata.Tags != nil {
+		for k, v := range metadata.Tags {
+			if match(fullName, k) {
+				for _, tag := range v {
+					tags[tag] = true
+				}
+			}
+		}
+	}
+	return tags
+}
+
+func (r *RuleContext) LeaveField() {
+	size := len(r.fieldContexts) - 1
+	r.fieldContexts = r.fieldContexts[:size]
+}
+
+// RuleExecutor represents a rule executor
+type RuleExecutor interface {
+	Transform(ctx RuleContext, msg interface{}) (interface{}, error)
+}
+
+// FieldTransformer represents a field transformer
+type FieldTransformer func(ctx RuleContext, fieldTransform FieldTransform, msg interface{}) (interface{}, error)
+
+// FieldTransform represents a field transform
+type FieldTransform interface {
+	Transform(ctx RuleContext, fieldCtx FieldContext, fieldValue interface{}) (interface{}, error)
+}
+
+// FieldRuleExecutor represents a field rule executor
+type FieldRuleExecutor interface {
+	RuleExecutor
+	SetFieldTransformer(transformer FieldTransformer)
+	NewTransform(ctx RuleContext) (FieldTransform, error)
+}
+
+type AbstractFieldRuleExecutor struct {
+	FieldRuleExecutor
+	FieldTransformer FieldTransformer
+}
+
+func (a *AbstractFieldRuleExecutor) SetFieldTransformer(transformer FieldTransformer) {
+	a.FieldTransformer = transformer
+}
+
+func (a *AbstractFieldRuleExecutor) Transform(ctx RuleContext, msg interface{}) (interface{}, error) {
+	// TODO preserve source?
+	switch ctx.RuleMode {
+	case Write, Upgrade:
+		for i := 0; i < ctx.Index; i++ {
+			otherRule := ctx.Rules[i]
+			if areTransformsWithSameTag(*ctx.Rule, otherRule) {
+				// ignore this transform if an earlier one has the same tag
+				return msg, nil
+			}
+		}
+	case Read, Downgrade:
+		for i := ctx.Index + 1; i < len(ctx.Rules); i++ {
+			otherRule := ctx.Rules[i]
+			if areTransformsWithSameTag(*ctx.Rule, otherRule) {
+				// ignore this transform if a later one has the same tag
+				return msg, nil
+			}
+		}
+	}
+
+	fieldTransform, err := a.NewTransform(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// TODO preserve source?
+	return a.FieldTransformer(ctx, fieldTransform, msg)
+}
+
+func areTransformsWithSameTag(rule1 schemaregistry.Rule, rule2 schemaregistry.Rule) bool {
+	return len(rule1.Tags) > 0 && rule1.Kind == "TRANSFORM" && rule1.Kind == rule2.Kind && rule1.Mode == rule2.Mode &&
+		rule1.Type == rule2.Type && reflect.DeepEqual(rule1.Tags, rule2.Tags)
+}
+
+// FieldContext represents a field context
+type FieldContext struct {
+	ContainingMessage interface{}
+	FullName          string
+	Name              string
+	Type              FieldType
+	Tags              map[string]bool
+}
+
+// FieldType represents the field type
+type FieldType = int
+
+const (
+	// TypeRecord represents a record
+	TypeRecord = 1
+	// TypeEnum represents an enum
+	TypeEnum = 2
+	// TypeArray represents an array
+	TypeArray = 3
+	// TypeMap represents a map
+	TypeMap = 4
+	// TypeCombined represents a combined
+	TypeCombined = 5
+	// TypeFixed represents a fixed
+	TypeFixed = 6
+	// TypeString represents a string
+	TypeString = 7
+	// TypeBytes represents bytes
+	TypeBytes = 8
+	// TypeInt represents an int
+	TypeInt = 9
+	// TypeLong represents a long
+	TypeLong = 10
+	// TypeFloat represents a float
+	TypeFloat = 11
+	// TypeDouble represents a double
+	TypeDouble = 12
+	// TypeBoolean represents a Boolean
+	TypeBoolean = 13
+	// TypeNull represents a null
+	TypeNull = 14
+)
+
+// RuleAction represents a rule action
+type RuleAction interface {
+	Run(ctx RuleContext, msg interface{}, err error) error
+}
+
+// ErrorAction represents an error action
+type ErrorAction struct {
+}
+
+// NoneAction represents a no-op action
+type NoneAction struct {
+}
+
+type RuleConditionErr struct {
+	Rule *schemaregistry.Rule
+}
+
+func (re RuleConditionErr) Error() string {
+	errMsg := re.Rule.Doc
+	if errMsg == "" {
+		if re.Rule.Expr != "" {
+			return "Expr failed: '" + re.Rule.Expr + "'"
+		}
+		return "Condition failed: '" + re.Rule.Name + "'"
+	}
+	return errMsg
+}
+
 // ConfigureSerializer configures the Serializer
 func (s *BaseSerializer) ConfigureSerializer(client schemaregistry.Client, serdeType Type, conf *SerializerConfig) error {
 	if client == nil {
@@ -100,6 +344,8 @@ func (s *BaseSerializer) ConfigureSerializer(client schemaregistry.Client, serde
 	s.Conf = conf
 	s.SerdeType = serdeType
 	s.SubjectNameStrategy = TopicNameStrategy
+	s.RuleExecutors = conf.RuleExecutors
+	s.RuleActions = conf.RuleActions
 	return nil
 }
 
@@ -181,10 +427,165 @@ func (s *BaseSerializer) GetID(topic string, msg interface{}, info *schemaregist
 	return id, nil
 }
 
-// WriteBytes writes the serialized payload prepended by the magicByte
+func (s *Serde) ExecuteRules(subject string, topic string, ruleMode RuleMode,
+	source *schemaregistry.SchemaInfo, target *schemaregistry.SchemaInfo, msg interface{}) (interface{}, error) {
+	if msg == nil || target == nil {
+		return msg, nil
+	}
+	var rules []schemaregistry.Rule
+	switch ruleMode {
+	case Upgrade:
+		if target.Ruleset != nil {
+			rules = target.Ruleset.MigrationRules
+		}
+	case Downgrade:
+		if source.Ruleset != nil {
+			// Execute downgrade rules in reverse order for symmetry
+			rules = reverseRules(source.Ruleset.MigrationRules)
+		}
+	default:
+		if target.Ruleset != nil {
+			rules = target.Ruleset.DomainRules
+			if ruleMode == Read {
+				// Execute read rules in reverse order for symmetry
+				rules = reverseRules(rules)
+			}
+		}
+	}
+	for i, rule := range rules {
+		if rule.Disabled {
+			continue
+		}
+		mode, ok := parseMode(rule.Mode)
+		if !ok {
+			continue
+		}
+		switch mode {
+		case WriteRead:
+			if ruleMode != Write && ruleMode != Read {
+				continue
+			}
+		case UpDown:
+			if ruleMode != Upgrade && ruleMode != Downgrade {
+				continue
+			}
+		default:
+			if mode != ruleMode {
+				continue
+			}
+		}
+		ctx := RuleContext{
+			Source:   source,
+			Target:   target,
+			Subject:  subject,
+			Topic:    topic,
+			IsKey:    s.SerdeType == KeySerde,
+			RuleMode: ruleMode,
+			Rule:     &rule,
+			Index:    i,
+			Rules:    rules,
+		}
+		ruleExecutor := s.RuleExecutors[rule.Type]
+		if ruleExecutor == nil {
+			err := s.runAction(ctx, ruleMode, rule, rule.OnFailure, msg,
+				fmt.Errorf("could not find rule executor of type %s", rule.Type), "ERROR")
+			if err != nil {
+				return nil, err
+			}
+			return msg, nil
+		}
+		var err error
+		msg, err = ruleExecutor.Transform(ctx, msg)
+		if err != nil {
+			err = s.runAction(ctx, ruleMode, rule, rule.OnFailure, msg, err, "ERROR")
+			if err != nil {
+				return nil, err
+			}
+		} else if msg == nil {
+			err = s.runAction(ctx, ruleMode, rule, rule.OnFailure, msg, nil, "ERROR")
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			err = s.runAction(ctx, ruleMode, rule, rule.OnSuccess, msg, nil, "NONE")
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	return msg, nil
+}
+
+func parseMode(mode string) (RuleMode, bool) {
+	c, ok := modes[strings.ToUpper(mode)]
+	return c, ok
+}
+
+func reverseRules(rules []schemaregistry.Rule) []schemaregistry.Rule {
+	newRules := make([]schemaregistry.Rule, len(rules))
+	copy(newRules, rules)
+	// Execute downgrade rules in reverse order for symmetry
+	for i, j := 0, len(newRules)-1; i < j; i, j = i+1, j-1 {
+		newRules[i], newRules[j] = newRules[j], newRules[i]
+	}
+	return newRules
+}
+
+func (s *Serde) runAction(ctx RuleContext, ruleMode RuleMode, rule schemaregistry.Rule,
+	action string, msg interface{}, err error, defaultAction string) error {
+	actionName := s.getRuleActionName(rule, ruleMode, action)
+	if actionName == nil {
+		actionName = &defaultAction
+	}
+	ruleAction := s.getRuleAction(ctx, *actionName)
+	if ruleAction == nil {
+		log.Printf("could not find rule action of type %s", *actionName)
+		return fmt.Errorf("could not find rule action of type %s", *actionName)
+	}
+	e := ruleAction.Run(ctx, msg, err)
+	if e != nil {
+		log.Printf("WARN: could not run post-rule action %s, error: %v", *actionName, e)
+		return e
+	}
+	return nil
+}
+
+func (s *Serde) getRuleActionName(rule schemaregistry.Rule, ruleMode RuleMode, actionName string) *string {
+	if actionName == "" {
+		return nil
+	}
+	mode, ok := parseMode(rule.Mode)
+	if !ok {
+		return nil
+	}
+	if (mode == WriteRead || mode == UpDown) && strings.Contains(actionName, ",") {
+		parts := strings.Split(actionName, ",")
+		switch ruleMode {
+		case Write, Upgrade:
+			return &parts[0]
+		case Read, Downgrade:
+			return &parts[1]
+		default:
+			return nil
+		}
+	}
+	return &actionName
+}
+
+func (s *Serde) getRuleAction(ctx RuleContext, actionName string) RuleAction {
+	if actionName == "ERROR" {
+		return ErrorAction{}
+	} else if actionName == "NONE" {
+		return NoneAction{}
+	} else {
+		return s.RuleActions[actionName]
+	}
+}
+
+// WriteBytes writes the serialized payload prepended by the MagicByte
 func (s *BaseSerializer) WriteBytes(id int, msgBytes []byte) ([]byte, error) {
 	var buf bytes.Buffer
-	err := buf.WriteByte(magicByte)
+	err := buf.WriteByte(MagicByte)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +605,7 @@ func (s *BaseSerializer) WriteBytes(id int, msgBytes []byte) ([]byte, error) {
 // GetSchema returns a schema for a payload
 func (s *BaseDeserializer) GetSchema(topic string, payload []byte) (schemaregistry.SchemaInfo, error) {
 	info := schemaregistry.SchemaInfo{}
-	if payload[0] != magicByte {
+	if payload[0] != MagicByte {
 		return info, fmt.Errorf("unknown magic byte")
 	}
 	id := binary.BigEndian.Uint32(payload[1:5])
@@ -240,4 +641,12 @@ func ResolveReferences(c schemaregistry.Client, schema schemaregistry.SchemaInfo
 
 // Close closes the Serde
 func (s *Serde) Close() {
+}
+
+func (a ErrorAction) Run(ctx RuleContext, msg interface{}, err error) error {
+	return fmt.Errorf("rule failed: %s, error: %v", ctx.Rule.Name, err)
+}
+
+func (a NoneAction) Run(ctx RuleContext, msg interface{}, err error) error {
+	return nil
 }

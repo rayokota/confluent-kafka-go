@@ -9,7 +9,7 @@ require (
 	github.com/alecthomas/kingpin v2.2.6+incompatible
 	github.com/confluentinc/confluent-kafka-go/v2 v2.3.0
 	github.com/gdamore/tcell v1.4.0
-	google.golang.org/protobuf v1.30.0
+	google.golang.org/protobuf v1.31.1-0.20231027082548-f4a6c1f6e5c1
 )
 
 require (
@@ -20,12 +20,12 @@ require (
 	github.com/google/uuid v1.3.0 // indirect
 	github.com/heetch/avro v0.4.4 // indirect
 	github.com/iancoleman/orderedmap v0.0.0-20190318233801-ac98e3ecb4b0 // indirect
-	github.com/invopop/jsonschema v0.7.0 // indirect
-	github.com/jhump/protoreflect v1.14.1 // indirect
+	github.com/invopop/jsonschema v0.12.0 // indirect
+	github.com/jhump/protoreflect v1.15.6 // indirect
 	github.com/lucasb-eyer/go-colorful v1.0.3 // indirect
 	github.com/mattn/go-runewidth v0.0.7 // indirect
-	github.com/santhosh-tekuri/jsonschema/v5 v5.2.0 // indirect
-	golang.org/x/sys v0.6.0 // indirect
-	golang.org/x/text v0.8.0 // indirect
-	google.golang.org/genproto v0.0.0-20230331144136-dcfb400f0633 // indirect
+	github.com/santhosh-tekuri/jsonschema/v5 v5.3.0 // indirect
+	golang.org/x/sys v0.13.0 // indirect
+	golang.org/x/text v0.13.0 // indirect
+	google.golang.org/genproto v0.0.0-20230526161137-0005af68ea54 // indirect
 )
