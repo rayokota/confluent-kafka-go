@@ -64,7 +64,7 @@ type localClient struct {
 	primitive    tink.AEAD
 }
 
-// NewClient returns a new local KMS client
+// NewLocalClient returns a new local KMS client
 func NewLocalClient(uriPrefix string, secret string) (registry.KMSClient, error) {
 	if !strings.HasPrefix(strings.ToLower(uriPrefix), localPrefix) {
 		return nil, fmt.Errorf("uriPrefix must start with %s, but got %s", localPrefix, uriPrefix)
