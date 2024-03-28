@@ -161,7 +161,8 @@ func NewSerializer(client schemaregistry.Client, serdeType serde.Type, conf *Ser
 	if err != nil {
 		return nil, err
 	}
-	for _, rule := range s.RuleExecutors {
+	for _, rule := range serde.GetRuleExecutors() {
+		rule.Configure(client.Config(), conf.RuleConfig)
 		fieldRule, ok := rule.(serde.FieldRuleExecutor)
 		if ok {
 			fieldRule.SetFieldTransformer(s.FieldTransform)
@@ -180,8 +181,6 @@ func (s *Deserializer) ConfigureDeserializer(client schemaregistry.Client, serde
 	}
 	s.MessageFactory = s.protoMessageFactory
 	s.ProtoRegistry = new(protoregistry.Types)
-	s.RuleExecutors = conf.RuleExecutors
-	s.RuleActions = conf.RuleActions
 	return nil
 }
 
@@ -501,7 +500,8 @@ func NewDeserializer(client schemaregistry.Client, serdeType serde.Type, conf *D
 	if err != nil {
 		return nil, err
 	}
-	for _, rule := range s.RuleExecutors {
+	for _, rule := range serde.GetRuleExecutors() {
+		rule.Configure(client.Config(), conf.RuleConfig)
 		fieldRule, ok := rule.(serde.FieldRuleExecutor)
 		if ok {
 			fieldRule.SetFieldTransformer(func(ctx serde.RuleContext, fieldTransform serde.FieldTransform, msg interface{}) (interface{}, error) {

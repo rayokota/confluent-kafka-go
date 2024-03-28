@@ -60,6 +60,7 @@ type metadataCacheEntry struct {
 /* HTTP(S) Schema Registry Client and schema caches */
 type mockclient struct {
 	sync.Mutex
+	config                   *Config
 	url                      *url.URL
 	infoToSchemaCache        map[subjectJSON]metadataCacheEntry
 	infoToSchemaCacheLock    sync.RWMutex
@@ -73,6 +74,11 @@ type mockclient struct {
 }
 
 var _ Client = new(mockclient)
+
+// Config returns the client config
+func (c *mockclient) Config() *Config {
+	return c.config
+}
 
 // Register registers Schema aliased with subject
 func (c *mockclient) Register(subject string, schema SchemaInfo, normalize bool) (id int, err error) {
@@ -659,6 +665,10 @@ func (c *mockclient) UpdateDefaultConfig(update ServerConfig) (result ServerConf
 	c.configCache[noSubject] = update
 	c.configCacheLock.Unlock()
 	return update, nil
+}
+
+// Close closes the client
+func (c *mockclient) Close() {
 }
 
 func schemasEqual(info1 SchemaInfo, info2 SchemaInfo) bool {

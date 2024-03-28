@@ -36,6 +36,13 @@ import (
 	"time"
 )
 
+func init() {
+	a := &serde.AbstractFieldRuleExecutor{}
+	f := &FieldEncryptionExecutor{*a, nil, nil}
+	f.FieldRuleExecutor = f
+	serde.RegisterRuleExecutor(f)
+}
+
 const (
 	// EncryptKekName represents a kek name
 	EncryptKekName = "encrypt.kek.name"
@@ -61,18 +68,23 @@ const (
 
 type FieldEncryptionExecutor struct {
 	serde.AbstractFieldRuleExecutor
-	deks.Client
+	Config map[string]string
+	Client deks.Client
 }
 
-func NewFieldEncryptionExecutor(conf *schemaregistry.Config) (*FieldEncryptionExecutor, error) {
-	dekClient, err := deks.NewClient(conf)
+// Configure configures the executor
+func (f *FieldEncryptionExecutor) Configure(clientConfig *schemaregistry.Config, config map[string]string) error {
+	client, err := deks.NewClient(clientConfig)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	a := &serde.AbstractFieldRuleExecutor{}
-	f := &FieldEncryptionExecutor{*a, dekClient}
-	f.FieldRuleExecutor = f
-	return f, nil
+	f.Config = config
+	f.Client = client
+	return nil
+}
+
+func (f *FieldEncryptionExecutor) Type() string {
+	return "ENCRYPT"
 }
 
 func (f *FieldEncryptionExecutor) NewTransform(ctx serde.RuleContext) (serde.FieldTransform, error) {
@@ -85,10 +97,10 @@ func (f *FieldEncryptionExecutor) NewTransform(ctx serde.RuleContext) (serde.Fie
 		return nil, err
 	}
 	transform := FieldEncryptionExecutorTransform{
-		FieldEncryptionExecutor: *f,
-		Cryptor:                 getCryptor(ctx),
-		KekName:                 kekName,
-		DekExpiryDays:           dekExpiryDays,
+		Executor:      *f,
+		Cryptor:       getCryptor(ctx),
+		KekName:       kekName,
+		DekExpiryDays: dekExpiryDays,
 	}
 	kek, err := transform.getOrCreateKek(ctx)
 	if err != nil {
@@ -98,8 +110,12 @@ func (f *FieldEncryptionExecutor) NewTransform(ctx serde.RuleContext) (serde.Fie
 	return &transform, nil
 }
 
+func (f *FieldEncryptionExecutor) Close() {
+	f.Client.Close()
+}
+
 type FieldEncryptionExecutorTransform struct {
-	FieldEncryptionExecutor
+	Executor      FieldEncryptionExecutor
 	Cryptor       Cryptor
 	KekName       string
 	Kek           deks.Kek
@@ -258,7 +274,7 @@ func (f *FieldEncryptionExecutorTransform) getOrCreateKek(ctx serde.RuleContext)
 }
 
 func (f *FieldEncryptionExecutorTransform) retrieveKekFromRegistry(key deks.KekID) (*deks.Kek, error) {
-	kek, err := f.Client.GetKek(key.Name, key.Deleted)
+	kek, err := f.Executor.Client.GetKek(key.Name, key.Deleted)
 	if err != nil {
 		var restErr *internal.RestError
 		if errors.As(err, &restErr) {
@@ -272,7 +288,7 @@ func (f *FieldEncryptionExecutorTransform) retrieveKekFromRegistry(key deks.KekI
 }
 
 func (f *FieldEncryptionExecutorTransform) storeKekToRegistry(key deks.KekID, kmsType string, kmsKeyID string, shared bool) (*deks.Kek, error) {
-	kek, err := f.Client.RegisterKek(key.Name, kmsType, kmsKeyID, nil, "", shared)
+	kek, err := f.Executor.Client.RegisterKek(key.Name, kmsType, kmsKeyID, nil, "", shared)
 	if err != nil {
 		var restErr *internal.RestError
 		if errors.As(err, &restErr) {
@@ -310,7 +326,7 @@ func (f *FieldEncryptionExecutorTransform) getOrCreateDek(ctx serde.RuleContext,
 		}
 		var encryptedDek []byte
 		if !f.Kek.Shared {
-			primitive, err = getAead(f.Kek)
+			primitive, err = getAead(f.Executor.Config, f.Kek)
 			if err != nil {
 				return nil, err
 			}
@@ -359,7 +375,7 @@ func (f *FieldEncryptionExecutorTransform) getOrCreateDek(ctx serde.RuleContext,
 	}
 	if keyBytes == nil {
 		if primitive == nil {
-			primitive, err = getAead(f.Kek)
+			primitive, err = getAead(f.Executor.Config, f.Kek)
 			if err != nil {
 				return nil, err
 			}
@@ -381,9 +397,9 @@ func (f *FieldEncryptionExecutorTransform) retrieveDekFromRegistry(key deks.DekI
 	var dek deks.Dek
 	var err error
 	if key.Version > 0 {
-		dek, err = f.Client.GetDekVersion(key.KekName, key.Subject, key.Version, key.Algorithm, key.Deleted)
+		dek, err = f.Executor.Client.GetDekVersion(key.KekName, key.Subject, key.Version, key.Algorithm, key.Deleted)
 	} else {
-		dek, err = f.Client.GetDek(key.KekName, key.Subject, key.Algorithm, key.Deleted)
+		dek, err = f.Executor.Client.GetDek(key.KekName, key.Subject, key.Algorithm, key.Deleted)
 	}
 	if err != nil {
 		var restErr *internal.RestError
@@ -405,9 +421,9 @@ func (f *FieldEncryptionExecutorTransform) storeDekToRegistry(key deks.DekID, en
 	var dek deks.Dek
 	var err error
 	if key.Version > 0 {
-		dek, err = f.Client.RegisterDek(key.KekName, key.Subject, key.Algorithm, encryptedDekStr)
+		dek, err = f.Executor.Client.RegisterDek(key.KekName, key.Subject, key.Algorithm, encryptedDekStr)
 	} else {
-		dek, err = f.Client.RegisterDekVersion(key.KekName, key.Subject, key.Version, key.Algorithm, encryptedDekStr)
+		dek, err = f.Executor.Client.RegisterDekVersion(key.KekName, key.Subject, key.Version, key.Algorithm, encryptedDekStr)
 	}
 	if err != nil {
 		var restErr *internal.RestError
@@ -531,12 +547,41 @@ func extractVersion(ciphertext []byte) (int, error) {
 	return int(version), nil
 }
 
-func getAead(kek deks.Kek) (tink.AEAD, error) {
+func getAead(config map[string]string, kek deks.Kek) (tink.AEAD, error) {
 	kekURL := kek.KmsType + "://" + kek.KmsKeyID
-	// TODO
-	kmsClient, err := registry.GetKMSClient(kekURL)
+	kmsClient, err := getKMSClient(config, kekURL)
 	if err != nil {
 		return nil, err
 	}
 	return kmsClient.GetAEAD(kekURL)
+}
+
+func getKMSClient(config map[string]string, kekURL string) (registry.KMSClient, error) {
+	driver, err := GetKMSDriver(kekURL)
+	if err != nil {
+		return nil, err
+	}
+	client, err := registry.GetKMSClient(kekURL)
+	if err != nil {
+		client, err = registerKMSClient(driver, config, &kekURL)
+		if err != nil {
+			return nil, err
+		}
+		return client, nil
+	}
+	return client, nil
+}
+
+func registerKMSClient(kmsDriver KMSDriver, config map[string]string, keyURL *string) (registry.KMSClient, error) {
+	kmsClient, err := kmsDriver.NewKMSClient(config, keyURL)
+	if err != nil {
+		return nil, err
+	}
+	registry.RegisterKMSClient(kmsClient)
+	return kmsClient, nil
+}
+
+type KMSDriver interface {
+	GetKeyURLPrefix() string
+	NewKMSClient(config map[string]string, keyURL *string) (registry.KMSClient, error)
 }

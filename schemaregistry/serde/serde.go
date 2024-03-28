@@ -106,8 +106,6 @@ type Serde struct {
 	Client              schemaregistry.Client
 	SerdeType           Type
 	SubjectNameStrategy SubjectNameStrategyFunc
-	RuleExecutors       map[string]RuleExecutor
-	RuleActions         map[string]RuleAction
 }
 
 // BaseSerializer represents basic serializer info
@@ -201,8 +199,16 @@ func (r *RuleContext) LeaveField() {
 	r.fieldContexts = r.fieldContexts[:size]
 }
 
+// RuleBase represents a rule base
+type RuleBase interface {
+	Configure(clientConfig *schemaregistry.Config, config map[string]string) error
+	Type() string
+	Close()
+}
+
 // RuleExecutor represents a rule executor
 type RuleExecutor interface {
+	RuleBase
 	Transform(ctx RuleContext, msg interface{}) (interface{}, error)
 }
 
@@ -309,6 +315,7 @@ const (
 
 // RuleAction represents a rule action
 type RuleAction interface {
+	RuleBase
 	Run(ctx RuleContext, msg interface{}, err error) error
 }
 
@@ -344,8 +351,6 @@ func (s *BaseSerializer) ConfigureSerializer(client schemaregistry.Client, serde
 	s.Conf = conf
 	s.SerdeType = serdeType
 	s.SubjectNameStrategy = TopicNameStrategy
-	s.RuleExecutors = conf.RuleExecutors
-	s.RuleActions = conf.RuleActions
 	return nil
 }
 
@@ -485,7 +490,7 @@ func (s *Serde) ExecuteRules(subject string, topic string, ruleMode RuleMode,
 			Index:    i,
 			Rules:    rules,
 		}
-		ruleExecutor := s.RuleExecutors[rule.Type]
+		ruleExecutor := GetRuleExecutor(rule.Type)
 		if ruleExecutor == nil {
 			err := s.runAction(ctx, ruleMode, rule, rule.OnFailure, msg,
 				fmt.Errorf("could not find rule executor of type %s", rule.Type), "ERROR")
@@ -578,7 +583,7 @@ func (s *Serde) getRuleAction(ctx RuleContext, actionName string) RuleAction {
 	} else if actionName == "NONE" {
 		return NoneAction{}
 	} else {
-		return s.RuleActions[actionName]
+		return GetRuleAction(actionName)
 	}
 }
 
@@ -643,10 +648,40 @@ func ResolveReferences(c schemaregistry.Client, schema schemaregistry.SchemaInfo
 func (s *Serde) Close() {
 }
 
+// Configure configures the action
+func (a ErrorAction) Configure(clientConfig *schemaregistry.Config, config map[string]string) error {
+	return nil
+}
+
+// Type returns the type
+func (a ErrorAction) Type() string {
+	return "ERROR"
+}
+
+// Run runs the action
 func (a ErrorAction) Run(ctx RuleContext, msg interface{}, err error) error {
 	return fmt.Errorf("rule failed: %s, error: %v", ctx.Rule.Name, err)
 }
 
+// Close closes the action
+func (a ErrorAction) Close() {
+}
+
+// Configure configures the action
+func (a NoneAction) Configure(clientConfig *schemaregistry.Config, config map[string]string) error {
+	return nil
+}
+
+// Type returns the type
+func (a NoneAction) Type() string {
+	return "NONE"
+}
+
+// Run runs the action
 func (a NoneAction) Run(ctx RuleContext, msg interface{}, err error) error {
 	return nil
+}
+
+// Close closes the action
+func (a NoneAction) Close() {
 }

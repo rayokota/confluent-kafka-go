@@ -17,22 +17,32 @@
 package deks
 
 import (
+	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry"
 	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/internal"
 	"net/url"
 	"sync"
 )
 
+var (
+	kekCache     map[KekID]Kek = make(map[KekID]Kek)
+	kekCacheLock sync.RWMutex
+	dekCache     map[DekID]Dek = make(map[DekID]Dek)
+	dekCacheLock sync.RWMutex
+)
+
 /* HTTP(S) DEK Registry Client and caches */
 type mockclient struct {
 	sync.Mutex
-	url          *url.URL
-	kekCache     map[KekID]Kek
-	kekCacheLock sync.RWMutex
-	dekCache     map[DekID]Dek
-	dekCacheLock sync.RWMutex
+	config *schemaregistry.Config
+	url    *url.URL
 }
 
 var _ Client = new(mockclient)
+
+// Config returns the client config
+func (c *mockclient) Config() *schemaregistry.Config {
+	return c.config
+}
 
 // RegisterKek registers kek
 func (c *mockclient) RegisterKek(name string, kmsType string, kmsKeyID string, kmsProps map[string]string, doc string, shared bool) (kek Kek, err error) {
@@ -40,9 +50,9 @@ func (c *mockclient) RegisterKek(name string, kmsType string, kmsKeyID string, k
 		Name:    name,
 		Deleted: false,
 	}
-	c.kekCacheLock.RLock()
-	kek, ok := c.kekCache[cacheKey]
-	c.kekCacheLock.RUnlock()
+	kekCacheLock.RLock()
+	kek, ok := kekCache[cacheKey]
+	kekCacheLock.RUnlock()
 	if ok {
 		return kek, nil
 	}
@@ -55,9 +65,9 @@ func (c *mockclient) RegisterKek(name string, kmsType string, kmsKeyID string, k
 		Doc:      doc,
 		Shared:   shared,
 	}
-	c.kekCacheLock.Lock()
-	c.kekCache[cacheKey] = kek
-	c.kekCacheLock.Unlock()
+	kekCacheLock.Lock()
+	kekCache[cacheKey] = kek
+	kekCacheLock.Unlock()
 	return kek, nil
 }
 
@@ -68,9 +78,9 @@ func (c *mockclient) GetKek(name string, deleted bool) (kek Kek, err error) {
 		Name:    name,
 		Deleted: false,
 	}
-	c.kekCacheLock.RLock()
-	kek, ok := c.kekCache[cacheKey]
-	c.kekCacheLock.RUnlock()
+	kekCacheLock.RLock()
+	kek, ok := kekCache[cacheKey]
+	kekCacheLock.RUnlock()
 	if ok {
 		if !kek.Deleted || deleted {
 			return kek, nil
@@ -103,9 +113,9 @@ func (c *mockclient) RegisterDekVersion(kekName string, subject string, version 
 		Algorithm: algorithm,
 		Deleted:   false,
 	}
-	c.dekCacheLock.RLock()
-	dek, ok := c.dekCache[cacheKey]
-	c.dekCacheLock.RUnlock()
+	dekCacheLock.RLock()
+	dek, ok := dekCache[cacheKey]
+	dekCacheLock.RUnlock()
 	if ok {
 		return dek, nil
 	}
@@ -117,9 +127,9 @@ func (c *mockclient) RegisterDekVersion(kekName string, subject string, version 
 		Algorithm:            algorithm,
 		EncryptedKeyMaterial: encryptedKeyMaterial,
 	}
-	c.dekCacheLock.Lock()
-	c.dekCache[cacheKey] = dek
-	c.dekCacheLock.Unlock()
+	dekCacheLock.Lock()
+	dekCache[cacheKey] = dek
+	dekCacheLock.Unlock()
 	return dek, nil
 }
 
@@ -133,9 +143,9 @@ func (c *mockclient) GetDekVersion(kekName string, subject string, version int, 
 		Algorithm: algorithm,
 		Deleted:   false,
 	}
-	c.dekCacheLock.RLock()
-	dek, ok := c.dekCache[cacheKey]
-	c.dekCacheLock.RUnlock()
+	dekCacheLock.RLock()
+	dek, ok := dekCache[cacheKey]
+	dekCacheLock.RUnlock()
 	if ok {
 		if !dek.Deleted || deleted {
 			return dek, nil
@@ -146,4 +156,18 @@ func (c *mockclient) GetDekVersion(kekName string, subject string, version int, 
 		Message: "Key Not Found",
 	}
 	return Dek{}, &posErr
+}
+
+// Close closes the client
+func (c *mockclient) Close() {
+	dekCacheLock.Lock()
+	for k := range dekCache {
+		delete(dekCache, k)
+	}
+	dekCacheLock.Unlock()
+	kekCacheLock.Lock()
+	for k := range kekCache {
+		delete(kekCache, k)
+	}
+	kekCacheLock.Unlock()
 }

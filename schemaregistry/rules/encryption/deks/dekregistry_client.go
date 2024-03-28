@@ -179,6 +179,7 @@ type DekID struct {
 /* HTTP(S) Schema Registry Client and schema caches */
 type client struct {
 	sync.Mutex
+	config       *schemaregistry.Config
 	restService  *internal.RestService
 	kekCache     cache.Cache
 	kekCacheLock sync.RWMutex
@@ -192,12 +193,14 @@ var _ Client = new(client)
 // The DEK Registry's REST interface is further explained in Confluent's Schema Registry API documentation
 // https://github.com/confluentinc/schema-registry/blob/master/client/src/main/java/io/confluent/kafka/schemaregistry/client/SchemaRegistryClient.java
 type Client interface {
+	Config() *schemaregistry.Config
 	RegisterKek(name string, kmsType string, kmsKeyID string, kmsProps map[string]string, doc string, shared bool) (kek Kek, err error)
 	GetKek(name string, deleted bool) (kek Kek, err error)
 	RegisterDek(kekName string, subject string, algorithm string, encryptedKeyMaterial string) (dek Dek, err error)
 	GetDek(kekName string, subject string, algorithm string, deleted bool) (dek Dek, err error)
 	RegisterDekVersion(kekName string, subject string, version int, algorithm string, encryptedKeyMaterial string) (dek Dek, err error)
 	GetDekVersion(kekName string, subject string, version int, algorithm string, deleted bool) (dek Dek, err error)
+	Close()
 }
 
 // NewClient returns a Client implementation
@@ -211,15 +214,13 @@ func NewClient(conf *schemaregistry.Config) (Client, error) {
 			return nil, err
 		}
 		mock := &mockclient{
-			url:      url,
-			kekCache: make(map[KekID]Kek),
-			dekCache: make(map[DekID]Dek),
+			config: conf,
+			url:    url,
 		}
 		return mock, nil
 	}
 
-	c := internal.ClientConfig(*conf)
-	restService, err := internal.NewRestService(&c)
+	restService, err := internal.NewRestService(&conf.ClientConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -240,11 +241,17 @@ func NewClient(conf *schemaregistry.Config) (Client, error) {
 		dekCache = cache.NewMapCache()
 	}
 	handle := &client{
+		config:      conf,
 		restService: restService,
 		kekCache:    kekCache,
 		dekCache:    dekCache,
 	}
 	return handle, nil
+}
+
+// Config returns the client config
+func (c *client) Config() *schemaregistry.Config {
+	return c.config
 }
 
 // RegisterKek registers kek
@@ -420,4 +427,8 @@ func (c *client) GetDekVersion(kekName string, subject string, version int, algo
 	}
 	c.dekCacheLock.Unlock()
 	return dek, err
+}
+
+// Close closes the client
+func (c *client) Close() {
 }

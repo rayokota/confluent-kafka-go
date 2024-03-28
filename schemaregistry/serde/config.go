@@ -26,10 +26,8 @@ type SerializerConfig struct {
 	UseLatestVersion bool
 	// NormalizeSchemas determines whether to normalize schemas during serialization
 	NormalizeSchemas bool
-	// RuleExecutors specifies the rule executors to use
-	RuleExecutors map[string]RuleExecutor
-	// RuleActions specifies the rule actions to use
-	RuleActions map[string]RuleAction
+	// RuleConfig specifies configuration options to the rules
+	RuleConfig map[string]string
 }
 
 // NewSerializerConfig returns a new configuration instance with sane defaults.
@@ -46,10 +44,8 @@ func NewSerializerConfig() *SerializerConfig {
 
 // DeserializerConfig is used to pass multiple configuration options to the deserializers.
 type DeserializerConfig struct {
-	// RuleExecutors specifies the rule executors to use
-	RuleExecutors map[string]RuleExecutor
-	// RuleActions specifies the rule actions to use
-	RuleActions map[string]RuleAction
+	// RuleConfig specifies configuration options to the rules
+	RuleConfig map[string]string
 }
 
 // NewDeserializerConfig returns a new configuration instance with sane defaults.

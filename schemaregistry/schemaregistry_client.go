@@ -261,6 +261,7 @@ type subjectMetadata struct {
 /* HTTP(S) Schema Registry Client and schema caches */
 type client struct {
 	sync.Mutex
+	config                    *Config
 	restService               *internal.RestService
 	infoToSchemaCache         cache.Cache
 	infoToSchemaCacheLock     sync.RWMutex
@@ -283,6 +284,7 @@ var _ Client = new(client)
 // The Schema Registry's REST interface is further explained in Confluent's Schema Registry API documentation
 // https://github.com/confluentinc/schema-registry/blob/master/client/src/main/java/io/confluent/kafka/schemaregistry/client/SchemaRegistryClient.java
 type Client interface {
+	Config() *Config
 	Register(subject string, schema SchemaInfo, normalize bool) (id int, err error)
 	RegisterFullResponse(subject string, schema SchemaInfo, normalize bool) (result SchemaMetadata, err error)
 	GetBySubjectAndID(subject string, id int) (schema SchemaInfo, err error)
@@ -306,6 +308,7 @@ type Client interface {
 	UpdateConfig(subject string, update ServerConfig) (result ServerConfig, err error)
 	GetDefaultConfig() (result ServerConfig, err error)
 	UpdateDefaultConfig(update ServerConfig) (result ServerConfig, err error)
+	Close()
 }
 
 // NewClient returns a Client implementation
@@ -319,6 +322,7 @@ func NewClient(conf *Config) (Client, error) {
 			return nil, err
 		}
 		mock := &mockclient{
+			config:               conf,
 			url:                  url,
 			infoToSchemaCache:    make(map[subjectJSON]metadataCacheEntry),
 			idToSchemaCache:      make(map[subjectID]infoCacheEntry),
@@ -328,8 +332,7 @@ func NewClient(conf *Config) (Client, error) {
 		return mock, nil
 	}
 
-	c := internal.ClientConfig(*conf)
-	restService, err := internal.NewRestService(&c)
+	restService, err := internal.NewRestService(&conf.ClientConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -374,6 +377,7 @@ func NewClient(conf *Config) (Client, error) {
 		metadataToSchemaCache = cache.NewMapCache()
 	}
 	handle := &client{
+		config:                conf,
 		restService:           restService,
 		infoToSchemaCache:     schemaToIDCache,
 		idToSchemaCache:       idToSchemaCache,
@@ -387,6 +391,11 @@ func NewClient(conf *Config) (Client, error) {
 		runtime.SetFinalizer(handle, stopEvictor)
 	}
 	return handle, nil
+}
+
+// Config returns the client config
+func (c *client) Config() *Config {
+	return c.config
 }
 
 // Register registers Schema aliased with subject
@@ -926,6 +935,10 @@ func (c *client) UpdateDefaultConfig(update ServerConfig) (result ServerConfig, 
 	err = c.restService.HandleRequest(internal.NewRequest("PUT", internal.Config, &update), &result)
 
 	return result, err
+}
+
+// Close closes the client
+func (c *client) Close() {
 }
 
 type evictor struct {

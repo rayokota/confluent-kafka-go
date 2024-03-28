@@ -17,6 +17,7 @@
 package encryption
 
 import (
+	"errors"
 	"fmt"
 	"github.com/tink-crypto/tink-go/v2/aead"
 	"github.com/tink-crypto/tink-go/v2/core/registry"
@@ -30,7 +31,32 @@ import (
 
 const (
 	localPrefix = "local-kms://"
+	secret      = "secret"
 )
+
+func init() {
+	driver := &localDriver{}
+	RegisterKMSDriver(driver)
+}
+
+type localDriver struct {
+}
+
+func (l *localDriver) GetKeyURLPrefix() string {
+	return localPrefix
+}
+
+func (l *localDriver) NewKMSClient(config map[string]string, keyURL *string) (registry.KMSClient, error) {
+	uriPrefix := localPrefix
+	if keyURL != nil {
+		uriPrefix = *keyURL
+	}
+	secretKey, ok := config[secret]
+	if !ok {
+		return nil, errors.New("cannot load secret")
+	}
+	return NewLocalClient(uriPrefix, secretKey)
+}
 
 // localClient represents a client to be used for local testing
 type localClient struct {
@@ -52,21 +78,6 @@ func NewLocalClient(uriPrefix string, secret string) (registry.KMSClient, error)
 	if err != nil {
 		return nil, err
 	}
-	/*
-		format := &gcmpb.AesGcmKeyFormat{
-			KeySize: keySize,
-		}
-		serializedFormat, err := proto.Marshal(format)
-		if err != nil {
-			tinkerror.Fail(fmt.Sprintf("failed to marshal key format: %s", err))
-		}
-		return &tinkpb.KeyTemplate{
-			TypeUrl:          aesGCMTypeURL,
-			Value:            serializedFormat,
-			OutputPrefixType: outputPrefixType,
-		}
-
-	*/
 	dekTemplate := aead.AES128GCMKeyTemplate()
 	primitive, err := registry.Primitive(dekTemplate.TypeUrl, serializedAESGCMKey)
 	if err != nil {

@@ -17,8 +17,7 @@
 package protobuf
 
 import (
-	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/rules/encryption"
-	"github.com/tink-crypto/tink-go/v2/core/registry"
+	_ "github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/rules/encryption"
 	"testing"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry"
@@ -211,23 +210,16 @@ func TestProtobufSerdeEncryption(t *testing.T) {
 	serde.MaybeFail = serde.InitFailFunc(t)
 	var err error
 
-	kmsClient, err := encryption.NewLocalClient("local-kms://", "foo")
-	serde.MaybeFail("Schema Registry configuration", err)
-	registry.RegisterKMSClient(kmsClient)
-
 	conf := schemaregistry.NewConfig("mock://")
 
 	client, err := schemaregistry.NewClient(conf)
 	serde.MaybeFail("Schema Registry configuration", err)
 
-	fieldEncryptionExecutor, err := encryption.NewFieldEncryptionExecutor(conf)
-	serde.MaybeFail("field encryption executor configuration", err)
-
 	serConfig := NewSerializerConfig()
 	serConfig.AutoRegisterSchemas = false
 	serConfig.UseLatestVersion = true
-	serConfig.RuleExecutors = map[string]serde.RuleExecutor{
-		"ENCRYPT": fieldEncryptionExecutor,
+	serConfig.RuleConfig = map[string]string{
+		"secret": "foo",
 	}
 	ser, err := NewSerializer(client, serde.ValueSerde, serConfig)
 	serde.MaybeFail("Serializer configuration", err)
@@ -292,8 +284,8 @@ message Pizza {
 	serde.MaybeFail("serialization", err)
 
 	deserConfig := NewDeserializerConfig()
-	deserConfig.RuleExecutors = map[string]serde.RuleExecutor{
-		"ENCRYPT": fieldEncryptionExecutor,
+	deserConfig.RuleConfig = map[string]string{
+		"secret": "foo",
 	}
 	deser, err := NewDeserializer(client, serde.ValueSerde, deserConfig)
 	serde.MaybeFail("Deserializer configuration", err)
@@ -304,6 +296,8 @@ message Pizza {
 
 	newobj, err := deser.Deserialize("topic1", bytes)
 	serde.MaybeFail("deserialization", err, serde.Expect(newobj.(proto.Message).ProtoReflect(), obj.ProtoReflect()))
+
+	serde.ClearRules()
 }
 
 func BenchmarkProtobufSerWithReference(b *testing.B) {
