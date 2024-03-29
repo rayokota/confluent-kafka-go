@@ -14,11 +14,12 @@
  * limitations under the License.
  */
 
-package encryption
+package local
 
 import (
 	"errors"
 	"fmt"
+	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/rules/encryption"
 	"github.com/tink-crypto/tink-go/v2/aead"
 	"github.com/tink-crypto/tink-go/v2/core/registry"
 	"github.com/tink-crypto/tink-go/v2/subtle"
@@ -30,24 +31,24 @@ import (
 )
 
 const (
-	localPrefix = "local-kms://"
-	secret      = "secret"
+	prefix = "local-kms://"
+	secret = "secret"
 )
 
 func init() {
 	driver := &localDriver{}
-	RegisterKMSDriver(driver)
+	encryption.RegisterKMSDriver(driver)
 }
 
 type localDriver struct {
 }
 
 func (l *localDriver) GetKeyURLPrefix() string {
-	return localPrefix
+	return prefix
 }
 
 func (l *localDriver) NewKMSClient(config map[string]string, keyURL *string) (registry.KMSClient, error) {
-	uriPrefix := localPrefix
+	uriPrefix := prefix
 	if keyURL != nil {
 		uriPrefix = *keyURL
 	}
@@ -58,16 +59,10 @@ func (l *localDriver) NewKMSClient(config map[string]string, keyURL *string) (re
 	return NewLocalClient(uriPrefix, secretKey)
 }
 
-// localClient represents a client to be used for local testing
-type localClient struct {
-	keyURIPrefix string
-	primitive    tink.AEAD
-}
-
 // NewLocalClient returns a new local KMS client
 func NewLocalClient(uriPrefix string, secret string) (registry.KMSClient, error) {
-	if !strings.HasPrefix(strings.ToLower(uriPrefix), localPrefix) {
-		return nil, fmt.Errorf("uriPrefix must start with %s, but got %s", localPrefix, uriPrefix)
+	if !strings.HasPrefix(strings.ToLower(uriPrefix), prefix) {
+		return nil, fmt.Errorf("uriPrefix must start with %s, but got %s", prefix, uriPrefix)
 	}
 	keyBytes, err := subtle.ComputeHKDF("SHA256", []byte(secret), nil, nil, 16)
 	if err != nil {
@@ -87,18 +82,4 @@ func NewLocalClient(uriPrefix string, secret string) (registry.KMSClient, error)
 		keyURIPrefix: uriPrefix,
 		primitive:    primitive.(tink.AEAD),
 	}, nil
-}
-
-// Supported true if this client does support keyURI
-func (c *localClient) Supported(keyURI string) bool {
-	return strings.HasPrefix(keyURI, c.keyURIPrefix)
-}
-
-// GetAEAD gets an AEAD backend by keyURI.
-// keyURI must have the following format: 'local-kms://{key}'.
-func (c *localClient) GetAEAD(keyURI string) (tink.AEAD, error) {
-	if !c.Supported(keyURI) {
-		return nil, fmt.Errorf("keyURI must start with prefix %s, but got %s", c.keyURIPrefix, keyURI)
-	}
-	return c.primitive, nil
 }
