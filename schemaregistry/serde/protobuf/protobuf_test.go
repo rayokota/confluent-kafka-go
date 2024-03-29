@@ -17,7 +17,8 @@
 package protobuf
 
 import (
-	_ "github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/rules/encryption"
+	_ "github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/rules/encryption/azure"
+	_ "github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/rules/encryption/local"
 	"testing"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry"

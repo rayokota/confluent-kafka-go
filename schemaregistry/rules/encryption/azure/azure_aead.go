@@ -37,8 +37,8 @@ type azureAEAD struct {
 var _ tink.AEAD = (*azureAEAD)(nil)
 
 // NewAEAD returns a new remote AEAD primitive for Azure Vault
-func NewAEAD(keyURI string, creds azcore.TokenCredential, algorithm azkeys.EncryptionAlgorithm) (tink.AEAD, error) {
-	vaultURL, keyName, keyVersion, err := getKeyInfo(keyURI)
+func NewAEAD(keyPath string, creds azcore.TokenCredential, algorithm azkeys.EncryptionAlgorithm) (tink.AEAD, error) {
+	vaultURL, keyName, keyVersion, err := getKeyInfo(keyPath)
 	if err != nil {
 		return nil, err
 	}
@@ -83,12 +83,12 @@ func (a *azureAEAD) Decrypt(ciphertext, associatedData []byte) ([]byte, error) {
 
 // getKeyInfo transforms keyPath into the Azure key name and key version.
 // The keyPath is expected to have the form "https://{vaultURL}/keys/{keyName}/{keyVersion}"
-func getKeyInfo(keyURI string) (vaultURL, keyName, keyVersion string, err error) {
-	u, err := url.Parse(keyURI)
+func getKeyInfo(keyPath string) (vaultURL, keyName, keyVersion string, err error) {
+	u, err := url.Parse(keyPath)
 	path := u.Path
 	parts := strings.Split(path, "/")
 	length := len(parts)
-	if length != 4 || parts[0] != "" || parts[length-2] != "keys" {
+	if length != 4 || parts[0] != "" || parts[1] != "keys" {
 		return "", "", "", errors.New("malformed keyPath")
 	}
 	return u.Scheme + "://" + u.Host, parts[2], parts[3], nil
