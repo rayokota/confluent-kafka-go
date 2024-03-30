@@ -18,10 +18,12 @@ package awskms
 
 import (
 	"context"
+	"errors"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/kms"
 	"github.com/tink-crypto/tink-go/v2/tink"
+	"regexp"
 )
 
 // awsAEAD is an implementation of the AEAD interface which performs
@@ -41,15 +43,21 @@ type awsAEAD struct {
 // See http://docs.aws.amazon.com/general/latest/gr/aws-arns-and-namespaces.html.
 func NewAEAD(keyID string, creds aws.CredentialsProvider) (tink.AEAD, error) {
 	var client *kms.Client
+	region, err := getRegion(keyID)
+	if err != nil {
+		return nil, err
+	}
 	if creds != nil {
 		client = kms.New(kms.Options{
 			Credentials: creds,
+			Region:      region,
 		})
 	} else {
 		cfg, err := config.LoadDefaultConfig(context.Background())
 		if err != nil {
 			return nil, err
 		}
+		cfg.Region = region
 		client = kms.NewFromConfig(cfg)
 	}
 	return &awsAEAD{
@@ -82,4 +90,17 @@ func (a *awsAEAD) Decrypt(ciphertext, associatedData []byte) ([]byte, error) {
 		return nil, err
 	}
 	return resp.Plaintext, nil
+}
+
+// getRegion extracts the region from keyURI.
+func getRegion(keyURI string) (string, error) {
+	re1, err := regexp.Compile(`arn:(aws[a-zA-Z0-9-_]*):kms:([a-z0-9-]+):`)
+	if err != nil {
+		return "", err
+	}
+	r := re1.FindStringSubmatch(keyURI)
+	if len(r) != 3 {
+		return "", errors.New("extracting region from URI failed")
+	}
+	return r[2], nil
 }
