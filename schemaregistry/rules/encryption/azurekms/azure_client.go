@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package azure
+package azurekms
 
 import (
 	"fmt"
@@ -37,8 +37,8 @@ type azureClient struct {
 	algorithm azkeys.EncryptionAlgorithm
 }
 
-// NewAzureClient returns a new Azure KMS client
-func NewAzureClient(keyURI string, creds azcore.TokenCredential, algorithm azkeys.EncryptionAlgorithm) (registry.KMSClient, error) {
+// NewClient returns a new Azure KMS client
+func NewClient(keyURI string, creds azcore.TokenCredential, algorithm azkeys.EncryptionAlgorithm) (registry.KMSClient, error) {
 	if !strings.HasPrefix(strings.ToLower(keyURI), prefix) {
 		return nil, fmt.Errorf("keyURI must start with %s, but got %s", prefix, keyURI)
 	}

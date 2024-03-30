@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package azure
+package azurekms
 
 import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
@@ -68,5 +68,5 @@ func (l *azureDriver) NewKMSClient(config map[string]string, keyURL *string) (re
 			return nil, err
 		}
 	}
-	return NewAzureClient(uriPrefix, creds, defaultEncryptionAlgorithm)
+	return NewClient(uriPrefix, creds, defaultEncryptionAlgorithm)
 }

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package local
+package localkms
 
 import (
 	"fmt"

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package azure
+package azurekms
 
 import (
 	"context"
@@ -37,8 +37,8 @@ type azureAEAD struct {
 var _ tink.AEAD = (*azureAEAD)(nil)
 
 // NewAEAD returns a new remote AEAD primitive for Azure Vault
-func NewAEAD(keyPath string, creds azcore.TokenCredential, algorithm azkeys.EncryptionAlgorithm) (tink.AEAD, error) {
-	vaultURL, keyName, keyVersion, err := getKeyInfo(keyPath)
+func NewAEAD(keyID string, creds azcore.TokenCredential, algorithm azkeys.EncryptionAlgorithm) (tink.AEAD, error) {
+	vaultURL, keyName, keyVersion, err := getKeyInfo(keyID)
 	if err != nil {
 		return nil, err
 	}
@@ -81,10 +81,10 @@ func (a *azureAEAD) Decrypt(ciphertext, associatedData []byte) ([]byte, error) {
 	return decryptResponse.Result, nil
 }
 
-// getKeyInfo transforms keyPath into the Azure key name and key version.
+// getKeyInfo transforms keyID into the Azure key name and key version.
 // The keyPath is expected to have the form "https://{vaultURL}/keys/{keyName}/{keyVersion}"
-func getKeyInfo(keyPath string) (vaultURL, keyName, keyVersion string, err error) {
-	u, err := url.Parse(keyPath)
+func getKeyInfo(keyID string) (vaultURL, keyName, keyVersion string, err error) {
+	u, err := url.Parse(keyID)
 	path := u.Path
 	parts := strings.Split(path, "/")
 	length := len(parts)
