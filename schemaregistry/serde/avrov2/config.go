@@ -16,17 +16,22 @@
 
 package avrov2
 
-import "github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/serde"
+import (
+	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/serde"
+	"github.com/hamba/avro/v2"
+)
 
 // SerializerConfig is used to pass multiple configuration options to the serializers.
 type SerializerConfig struct {
 	serde.SerializerConfig
+	resolver *avro.TypeResolver
 }
 
 // NewSerializerConfig returns a new configuration instance with sane defaults.
 func NewSerializerConfig() *SerializerConfig {
 	c := &SerializerConfig{
 		SerializerConfig: *serde.NewSerializerConfig(),
+		resolver:         avro.NewTypeResolver(),
 	}
 
 	return c
@@ -35,12 +40,14 @@ func NewSerializerConfig() *SerializerConfig {
 // DeserializerConfig is used to pass multiple configuration options to the deserializers.
 type DeserializerConfig struct {
 	serde.DeserializerConfig
+	resolver *avro.TypeResolver
 }
 
 // NewDeserializerConfig returns a new configuration instance with sane defaults.
 func NewDeserializerConfig() *DeserializerConfig {
 	c := &DeserializerConfig{
 		DeserializerConfig: *serde.NewDeserializerConfig(),
+		resolver:           avro.NewTypeResolver(),
 	}
 
 	return c

@@ -122,7 +122,6 @@ func getType(fd protoreflect.FieldDescriptor) serde.FieldType {
 	default:
 		return serde.TypeNull
 	}
-
 }
 
 func getInlineTags(fd protoreflect.FieldDescriptor) []string {

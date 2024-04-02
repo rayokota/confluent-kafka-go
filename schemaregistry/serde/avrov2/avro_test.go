@@ -53,7 +53,8 @@ const (
     },
     {
       "name": "StringField",
-      "type": "string"
+      "type": "string",
+      "confluent:tags": [ "PII" ]
     },
     {
       "name": "BoolField",
