@@ -21,6 +21,7 @@ import (
 	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/serde"
 	"github.com/hamba/avro/v2"
 	"github.com/modern-go/reflect2"
+	"reflect"
 	"strings"
 )
 
@@ -51,19 +52,37 @@ func transform(ctx serde.RuleContext, resolver *avro.TypeResolver, schema avro.S
 		*/
 	case *avro.RecordSchema:
 		if msg == nil {
-			return nil, nil
+			return msg, nil
 		}
 		recordSchema := schema.(*avro.RecordSchema)
 		for _, f := range recordSchema.Fields() {
 			fullName := recordSchema.FullName() + "." + f.Name()
+			defer ctx.LeaveField()
 			ctx.EnterField(msg, fullName, f.Name(), getType(f.Type()), getInlineTags(f))
+			val := getField(msg, f.Name())
+			newVal, err := transform(ctx, resolver, f.Type(), val, fieldTransform)
+			if err != nil {
+				return nil, err
+			}
+			if ctx.Rule.Kind == "CONDITION" {
+				newBool, ok := newVal.(bool)
+				if ok && !newBool {
+					return nil, serde.RuleConditionErr{
+						Rule: ctx.Rule,
+					}
+				}
+			}
+			err = setField(msg, f.Name(), newVal)
+			if err != nil {
+				return nil, err
+			}
 		}
 		return msg, nil
 	default:
 		if fieldCtx != nil {
 			ruleTags := ctx.Rule.Tags
 			if len(ruleTags) == 0 || !disjoint(ruleTags, fieldCtx.Tags) {
-				return doFieldTransform(ctx, msg, fieldTransform, fieldCtx)
+				return fieldTransform.Transform(ctx, *fieldCtx, msg)
 			}
 		}
 		return msg, nil
@@ -107,8 +126,12 @@ func getType(schema avro.Schema) serde.FieldType {
 
 func getInlineTags(field *avro.Field) []string {
 	prop := field.Prop("confluent:tags")
-	tags, ok := prop.([]string)
+	val, ok := prop.([]interface{})
 	if ok {
+		tags := make([]string, len(val))
+		for i, v := range val {
+			tags[i] = fmt.Sprint(v)
+		}
 		return tags
 	}
 	return []string{}
@@ -121,6 +144,25 @@ func disjoint(slice1 []string, map1 map[string]bool) bool {
 		}
 	}
 	return true
+}
+
+func getField(msg interface{}, name string) interface{} {
+	v := reflect.ValueOf(msg)
+	if v.Kind() == reflect.Pointer {
+		v = v.Elem()
+	}
+	fieldVal := v.FieldByName(name)
+	return fieldVal.Interface()
+}
+
+func setField(msg interface{}, name string, value interface{}) error {
+	v := reflect.ValueOf(msg)
+	if v.Kind() == reflect.Pointer {
+		v = v.Elem()
+	}
+	fieldVal := v.FieldByName(name)
+	fieldVal.Set(reflect.ValueOf(value))
+	return nil
 }
 
 func resolveUnion(resolver *avro.TypeResolver, schema avro.Schema, msg interface{}) (avro.Schema, error) {

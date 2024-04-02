@@ -18,23 +18,34 @@ package avrov2
 
 import (
 	"encoding"
+	"errors"
 	"fmt"
 	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry"
+	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/cache"
 	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/serde"
 	"github.com/hamba/avro/v2"
 	"reflect"
 	"strings"
+	"sync"
 	"time"
 )
 
 // Serializer represents a generic Avro serializer
 type Serializer struct {
 	serde.BaseSerializer
+	*Serde
 }
 
 // Deserializer represents a generic Avro deserializer
 type Deserializer struct {
 	serde.BaseDeserializer
+	*Serde
+}
+
+type Serde struct {
+	resolver              *avro.TypeResolver
+	schemaToTypeCache     cache.Cache
+	schemaToTypeCacheLock sync.RWMutex
 }
 
 var _ serde.Serializer = new(Serializer)
@@ -42,10 +53,29 @@ var _ serde.Deserializer = new(Deserializer)
 
 // NewSerializer creates an Avro serializer for generic objects
 func NewSerializer(client schemaregistry.Client, serdeType serde.Type, conf *SerializerConfig) (*Serializer, error) {
-	s := &Serializer{}
-	err := s.ConfigureSerializer(client, serdeType, &conf.SerializerConfig)
+	schemaToTypeCache, err := cache.NewLRUCache(1000)
 	if err != nil {
 		return nil, err
+	}
+	ps := &Serde{
+		resolver:          avro.NewTypeResolver(),
+		schemaToTypeCache: schemaToTypeCache,
+	}
+	s := &Serializer{
+		Serde: ps,
+	}
+	err = s.ConfigureSerializer(client, serdeType, &conf.SerializerConfig)
+	if err != nil {
+		return nil, err
+	}
+	for _, rule := range serde.GetRuleExecutors() {
+		rule.Configure(client.Config(), conf.RuleConfig)
+		fieldRule, ok := rule.(serde.FieldRuleExecutor)
+		if ok {
+			fieldRule.SetFieldTransformer(func(ctx serde.RuleContext, fieldTransform serde.FieldTransform, msg interface{}) (interface{}, error) {
+				return s.FieldTransform(s.Client, ctx, fieldTransform, msg)
+			})
+		}
 	}
 	return s, nil
 }
@@ -55,12 +85,11 @@ func (s *Serializer) Serialize(topic string, msg interface{}) ([]byte, error) {
 	if msg == nil {
 		return nil, nil
 	}
-	val := reflect.ValueOf(msg)
-	if val.Kind() == reflect.Ptr {
-		// avro.TypeOf expects an interface containing a non-pointer
-		msg = val.Elem().Interface()
+	msgType := reflect.TypeOf(msg)
+	if msgType.Kind() != reflect.Pointer {
+		return nil, errors.New("input message must be a pointer")
 	}
-	avroType, err := structToSchema(reflect.TypeOf(msg))
+	avroType, err := structToSchema(msgType.Elem())
 	if err != nil {
 		return nil, err
 	}
@@ -68,6 +97,14 @@ func (s *Serializer) Serialize(topic string, msg interface{}) ([]byte, error) {
 		Schema: avroType.String(),
 	}
 	id, err := s.GetID(topic, msg, &info)
+	if err != nil {
+		return nil, err
+	}
+	subject, err := s.SubjectNameStrategy(topic, s.SerdeType, info)
+	if err != nil {
+		return nil, err
+	}
+	msg, err = s.ExecuteRules(subject, topic, serde.Write, nil, &info, msg)
 	if err != nil {
 		return nil, err
 	}
@@ -84,10 +121,29 @@ func (s *Serializer) Serialize(topic string, msg interface{}) ([]byte, error) {
 
 // NewDeserializer creates an Avro deserializer for generic objects
 func NewDeserializer(client schemaregistry.Client, serdeType serde.Type, conf *DeserializerConfig) (*Deserializer, error) {
-	s := &Deserializer{}
-	err := s.ConfigureDeserializer(client, serdeType, &conf.DeserializerConfig)
+	schemaToTypeCache, err := cache.NewLRUCache(1000)
 	if err != nil {
 		return nil, err
+	}
+	ps := &Serde{
+		resolver:          avro.NewTypeResolver(),
+		schemaToTypeCache: schemaToTypeCache,
+	}
+	s := &Deserializer{
+		Serde: ps,
+	}
+	err = s.ConfigureDeserializer(client, serdeType, &conf.DeserializerConfig)
+	if err != nil {
+		return nil, err
+	}
+	for _, rule := range serde.GetRuleExecutors() {
+		rule.Configure(client.Config(), conf.RuleConfig)
+		fieldRule, ok := rule.(serde.FieldRuleExecutor)
+		if ok {
+			fieldRule.SetFieldTransformer(func(ctx serde.RuleContext, fieldTransform serde.FieldTransform, msg interface{}) (interface{}, error) {
+				return s.FieldTransform(s.Client, ctx, fieldTransform, msg)
+			})
+		}
 	}
 	return s, nil
 }
@@ -101,7 +157,7 @@ func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, e
 	if err != nil {
 		return nil, err
 	}
-	writer, name, err := s.toType(info)
+	writer, name, err := s.toType(s.Client, info)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +170,14 @@ func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, e
 		return nil, err
 	}
 	err = avro.Unmarshal(writer, payload[5:], msg)
-	return msg, err
+	if err != nil {
+		return nil, err
+	}
+	msg, err = s.ExecuteRules(subject, topic, serde.Read, nil, &info, msg)
+	if err != nil {
+		return nil, err
+	}
+	return msg, nil
 }
 
 // DeserializeInto implements deserialization of generic Avro data to the given object
@@ -126,7 +189,7 @@ func (s *Deserializer) DeserializeInto(topic string, payload []byte, msg interfa
 	if err != nil {
 		return err
 	}
-	writer, _, err := s.toType(info)
+	writer, _, err := s.toType(s.Client, info)
 	if err != nil {
 		return err
 	}
@@ -134,8 +197,17 @@ func (s *Deserializer) DeserializeInto(topic string, payload []byte, msg interfa
 	return err
 }
 
-func (s *Deserializer) toType(schema schemaregistry.SchemaInfo) (avro.Schema, string, error) {
-	avroType, err := resolveAvroReferences(s.Client, schema)
+func (s *Serde) FieldTransform(client schemaregistry.Client, ctx serde.RuleContext, fieldTransform serde.FieldTransform, msg interface{}) (interface{}, error) {
+	schema, _, err := s.toType(client, *ctx.Target)
+	if err != nil {
+		return nil, err
+	}
+	return transform(ctx, s.resolver, schema, msg, fieldTransform)
+}
+
+func (s *Serde) toType(client schemaregistry.Client, schema schemaregistry.SchemaInfo) (avro.Schema, string, error) {
+	// TODO cache
+	avroType, err := resolveAvroReferences(client, schema)
 	name := ""
 	named, ok := avroType.(avro.NamedSchema)
 	if ok {

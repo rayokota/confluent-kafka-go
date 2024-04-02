@@ -75,7 +75,6 @@ func transform(ctx serde.RuleContext, descriptor protoreflect.Descriptor, msg in
 						Rule: ctx.Rule,
 					}
 				}
-
 			}
 			clone.ProtoReflect().Set(fd, newProtoValue)
 		}

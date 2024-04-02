@@ -414,8 +414,8 @@ func ignoreFile(name string) bool {
 		strings.HasPrefix(name, "google/type/")
 }
 
-func (p *Serde) FieldTransform(client schemaregistry.Client, ctx serde.RuleContext, fieldTransform serde.FieldTransform, msg interface{}) (interface{}, error) {
-	fd, err := p.toFileDesc(client, *ctx.Target)
+func (s *Serde) FieldTransform(client schemaregistry.Client, ctx serde.RuleContext, fieldTransform serde.FieldTransform, msg interface{}) (interface{}, error) {
+	fd, err := s.toFileDesc(client, *ctx.Target)
 	if err != nil {
 		return nil, err
 	}
@@ -424,10 +424,10 @@ func (p *Serde) FieldTransform(client schemaregistry.Client, ctx serde.RuleConte
 	return transform(ctx, md.Unwrap(), msg, fieldTransform)
 }
 
-func (p *Serde) toFileDesc(client schemaregistry.Client, info schemaregistry.SchemaInfo) (*desc.FileDescriptor, error) {
-	p.schemaToDescCacheLock.RLock()
-	value, ok := p.schemaToDescCache.Get(info.Schema)
-	p.schemaToDescCacheLock.RUnlock()
+func (s *Serde) toFileDesc(client schemaregistry.Client, info schemaregistry.SchemaInfo) (*desc.FileDescriptor, error) {
+	s.schemaToDescCacheLock.RLock()
+	value, ok := s.schemaToDescCache.Get(info.Schema)
+	s.schemaToDescCacheLock.RUnlock()
 	if ok {
 		return value.(*desc.FileDescriptor), nil
 	}
@@ -435,9 +435,9 @@ func (p *Serde) toFileDesc(client schemaregistry.Client, info schemaregistry.Sch
 	if err != nil {
 		return nil, err
 	}
-	p.schemaToDescCacheLock.Lock()
-	p.schemaToDescCache.Put(info.Schema, fd)
-	p.schemaToDescCacheLock.Unlock()
+	s.schemaToDescCacheLock.Lock()
+	s.schemaToDescCache.Put(info.Schema, fd)
+	s.schemaToDescCacheLock.Unlock()
 	return fd, nil
 }
 
