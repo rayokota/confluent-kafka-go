@@ -54,17 +54,11 @@ func transform(ctx serde.RuleContext, resolver *avro.TypeResolver, schema avro.S
 		if msg == nil {
 			return msg, nil
 		}
-		var msgObj interface{}
-		if msg.Kind() == reflect.Pointer {
-			msgObj = msg.Elem().Interface()
-		} else {
-			msgObj = msg.Interface()
-		}
 		recordSchema := schema.(*avro.RecordSchema)
 		for _, f := range recordSchema.Fields() {
 			fullName := recordSchema.FullName() + "." + f.Name()
 			defer ctx.LeaveField()
-			ctx.EnterField(msgObj, fullName, f.Name(), getType(f.Type()), getInlineTags(f))
+			ctx.EnterField(deref(msg).Interface(), fullName, f.Name(), getType(f.Type()), getInlineTags(f))
 			field, err := getField(msg, f.Name())
 			if err != nil {
 				return nil, err
@@ -75,8 +69,8 @@ func transform(ctx serde.RuleContext, resolver *avro.TypeResolver, schema avro.S
 			}
 			if ctx.Rule.Kind == "CONDITION" {
 				// TODO test
-				newBool := newVal.Elem().Bool()
-				if !newBool {
+				newBool := deref(newVal)
+				if newBool.Kind() == reflect.Bool && !newBool.Bool() {
 					return nil, serde.RuleConditionErr{
 						Rule: ctx.Rule,
 					}
@@ -92,12 +86,7 @@ func transform(ctx serde.RuleContext, resolver *avro.TypeResolver, schema avro.S
 		if fieldCtx != nil {
 			ruleTags := ctx.Rule.Tags
 			if len(ruleTags) == 0 || !disjoint(ruleTags, fieldCtx.Tags) {
-				var val interface{}
-				if msg.Kind() == reflect.Pointer {
-					val = msg.Elem().Interface()
-				} else {
-					val = msg.Interface()
-				}
+				val := deref(msg).Interface()
 				newVal, err := fieldTransform.Transform(ctx, *fieldCtx, val)
 				if err != nil {
 					return nil, err
@@ -168,20 +157,14 @@ func disjoint(slice1 []string, map1 map[string]bool) bool {
 }
 
 func getField(msg *reflect.Value, name string) (*reflect.Value, error) {
-	var v reflect.Value
-	if msg.Kind() == reflect.Pointer {
-		v = msg.Elem()
-	} else {
-		v = *msg
-	}
-	fieldVal := v.FieldByName(name)
+	fieldVal := deref(msg).FieldByName(name)
 	return &fieldVal, nil
 }
 
 func setField(field *reflect.Value, value *reflect.Value) error {
 	v := field
-	if !v.CanAddr() {
-		return fmt.Errorf("cannot assign to the item passed, item must be a pointer")
+	if !v.CanSet() {
+		return fmt.Errorf("cannot assign to the given field")
 	}
 	v.Set(*value)
 	return nil
@@ -190,7 +173,7 @@ func setField(field *reflect.Value, value *reflect.Value) error {
 func resolveUnion(resolver *avro.TypeResolver, schema avro.Schema, msg *reflect.Value) (avro.Schema, error) {
 	union := schema.(*avro.UnionSchema)
 	// TODO test
-	val := msg.Elem().Interface()
+	val := deref(msg).Interface()
 	typ := reflect2.TypeOf(val)
 	names, err := resolver.Name(typ)
 	if err != nil {
@@ -207,4 +190,12 @@ func resolveUnion(resolver *avro.TypeResolver, schema avro.Schema, msg *reflect.
 		}
 	}
 	return nil, fmt.Errorf("avro: unknown union type %s", names[0])
+}
+
+func deref(val *reflect.Value) *reflect.Value {
+	if val.Kind() == reflect.Pointer {
+		v := val.Elem()
+		return &v
+	}
+	return val
 }
