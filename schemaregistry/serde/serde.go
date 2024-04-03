@@ -106,6 +106,7 @@ type Serde struct {
 	Client              schemaregistry.Client
 	SerdeType           Type
 	SubjectNameStrategy SubjectNameStrategyFunc
+	MessageFactory      MessageFactory
 }
 
 // BaseSerializer represents basic serializer info
@@ -117,8 +118,7 @@ type BaseSerializer struct {
 // BaseDeserializer represents basic deserializer info
 type BaseDeserializer struct {
 	Serde
-	Conf           *DeserializerConfig
-	MessageFactory MessageFactory
+	Conf *DeserializerConfig
 }
 
 // RuleContext represents a rule context

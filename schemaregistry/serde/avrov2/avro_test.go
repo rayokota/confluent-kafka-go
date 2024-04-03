@@ -72,10 +72,22 @@ const (
   ]
 } 
 `
+	rootPointerSchema = `
+{
+  "name": "NestedTestPointerRecord",
+  "type": "record",
+  "fields": [
+    {
+      "name": "OtherField",
+      "type": ["null", "DemoSchema"]
+    }
+  ]
+}
+`
 )
 
 func testMessageFactory(subject string, name string) (interface{}, error) {
-	if subject != "topic1-value" {
+	if subject != "" && subject != "topic1-value" {
 		return nil, errors.New("message factory only handles topic1")
 	}
 
@@ -84,6 +96,8 @@ func testMessageFactory(subject string, name string) (interface{}, error) {
 		return &DemoSchema{}, nil
 	case "NestedTestRecord":
 		return &NestedTestRecord{}, nil
+	case "NestedTestPointerRecord":
+		return &NestedTestPointerRecord{}, nil
 	}
 
 	return nil, errors.New("schema not found")
@@ -396,6 +410,102 @@ func TestAvroSerdeEncryptionWithReferences(t *testing.T) {
 	serde.MaybeFail("deserialization", err, serde.Expect(newobj, &obj))
 }
 
+func TestAvroSerdeEncryptionWithPointerReferences(t *testing.T) {
+	serde.MaybeFail = serde.InitFailFunc(t)
+	var err error
+
+	nested := DemoSchema{}
+	nested.IntField = 123
+	nested.DoubleField = 45.67
+	nested.StringField = "hi"
+	nested.BoolField = true
+	nested.BytesField = []byte{1, 2}
+	obj := NestedTestPointerRecord{
+		OtherField: &nested,
+	}
+
+	conf := schemaregistry.NewConfig("mock://")
+
+	client, err := schemaregistry.NewClient(conf)
+	serde.MaybeFail("Schema Registry configuration", err)
+
+	serConfig := NewSerializerConfig()
+	serConfig.AutoRegisterSchemas = false
+	serConfig.UseLatestVersion = true
+	serConfig.RuleConfig = map[string]string{
+		"secret": "foo",
+	}
+	ser, err := NewSerializer(client, serde.ValueSerde, serConfig)
+	serde.MaybeFail("Serializer configuration", err)
+	ser.RegisterType("DemoSchema", testMessageFactory)
+
+	info := schemaregistry.SchemaInfo{
+		Schema:     string(demoSchema),
+		SchemaType: "AVRO",
+	}
+
+	id, err := client.Register("demo-value", info, false)
+	serde.MaybeFail("Schema registration", err)
+	if id <= 0 {
+		t.Errorf("Expected valid schema id, found %d", id)
+	}
+
+	encRule := schemaregistry.Rule{
+		Name: "test-encrypt",
+		Kind: "TRANSFORM",
+		Mode: "WRITEREAD",
+		Type: "ENCRYPT",
+		Tags: []string{"PII"},
+		Params: map[string]string{
+			"encrypt.kek.name":   "kek1",
+			"encrypt.kms.type":   "local-kms",
+			"encrypt.kms.key.id": "mykey",
+		},
+		OnFailure: "ERROR,NONE",
+	}
+	ruleSet := schemaregistry.RuleSet{
+		DomainRules: []schemaregistry.Rule{encRule},
+	}
+
+	info = schemaregistry.SchemaInfo{
+		Schema:     string(rootPointerSchema),
+		SchemaType: "AVRO",
+		References: []schemaregistry.Reference{
+			schemaregistry.Reference{
+				Name:    "DemoSchema",
+				Subject: "demo-value",
+				Version: 1,
+			},
+		},
+		Ruleset: &ruleSet,
+	}
+
+	id, err = client.Register("topic1-value", info, false)
+	serde.MaybeFail("Schema registration", err)
+	if id <= 0 {
+		t.Errorf("Expected valid schema id, found %d", id)
+	}
+
+	bytes, err := ser.Serialize("topic1", &obj)
+	serde.MaybeFail("serialization", err)
+
+	// Reset encrypted field
+	obj.OtherField.StringField = "hi"
+
+	deserConfig := NewDeserializerConfig()
+	deserConfig.RuleConfig = map[string]string{
+		"secret": "foo",
+	}
+	deser, err := NewDeserializer(client, serde.ValueSerde, deserConfig)
+	serde.MaybeFail("Deserializer configuration", err)
+	deser.Client = ser.Client
+	deser.MessageFactory = testMessageFactory
+	deser.RegisterType("DemoSchema", testMessageFactory)
+
+	newobj, err := deser.Deserialize("topic1", bytes)
+	serde.MaybeFail("deserialization", err, serde.Expect(newobj, &obj))
+}
+
 type DemoSchema struct {
 	IntField int32 `json:"IntField"`
 
@@ -410,4 +520,8 @@ type DemoSchema struct {
 
 type NestedTestRecord struct {
 	OtherField DemoSchema
+}
+
+type NestedTestPointerRecord struct {
+	OtherField *DemoSchema
 }

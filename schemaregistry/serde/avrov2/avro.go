@@ -197,6 +197,19 @@ func (s *Deserializer) DeserializeInto(topic string, payload []byte, msg interfa
 	return err
 }
 
+func (s *Serde) RegisterType(name string, messageFactory serde.MessageFactory) error {
+	if messageFactory == nil {
+		return errors.New("MessageFactory is nil")
+	}
+	typ, err := messageFactory("", name)
+	if err != nil {
+		return err
+	}
+	v := reflect.ValueOf(typ)
+	s.resolver.Register(name, v.Elem().Interface())
+	return nil
+}
+
 func (s *Serde) FieldTransform(client schemaregistry.Client, ctx serde.RuleContext, fieldTransform serde.FieldTransform, msg interface{}) (interface{}, error) {
 	schema, _, err := s.toType(client, *ctx.Target)
 	if err != nil {
