@@ -201,7 +201,7 @@ func (s *Serde) RegisterType(name string, msgType interface{}) {
 	s.resolver.Register(name, msgType)
 }
 
-func (s *Serde) RegisterTypeFromFactory(name string, messageFactory serde.MessageFactory) error {
+func (s *Serde) RegisterTypeFromMessageFactory(name string, messageFactory serde.MessageFactory) error {
 	if messageFactory == nil {
 		return errors.New("MessageFactory is nil")
 	}
@@ -228,14 +228,29 @@ func (s *Serde) FieldTransform(client schemaregistry.Client, ctx serde.RuleConte
 }
 
 func (s *Serde) toType(client schemaregistry.Client, schema schemaregistry.SchemaInfo) (avro.Schema, string, error) {
-	// TODO cache
+	s.schemaToTypeCacheLock.RLock()
+	value, ok := s.schemaToTypeCache.Get(schema.Schema)
+	s.schemaToTypeCacheLock.RUnlock()
+	if ok {
+		avroType := value.(avro.Schema)
+		return avroType, name(avroType), nil
+	}
 	avroType, err := resolveAvroReferences(client, schema)
-	name := ""
+	if err != nil {
+		return nil, "", err
+	}
+	s.schemaToTypeCacheLock.Lock()
+	s.schemaToTypeCache.Put(schema.Schema, avroType)
+	s.schemaToTypeCacheLock.Unlock()
+	return avroType, name(avroType), nil
+}
+
+func name(avroType avro.Schema) string {
 	named, ok := avroType.(avro.NamedSchema)
 	if ok {
-		name = named.FullName()
+		return named.FullName()
 	}
-	return avroType, name, err
+	return ""
 }
 
 func resolveAvroReferences(c schemaregistry.Client, schema schemaregistry.SchemaInfo) (avro.Schema, error) {

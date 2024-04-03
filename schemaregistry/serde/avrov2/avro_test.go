@@ -437,7 +437,7 @@ func TestAvroSerdeEncryptionWithPointerReferences(t *testing.T) {
 	}
 	ser, err := NewSerializer(client, serde.ValueSerde, serConfig)
 	serde.MaybeFail("Serializer configuration", err)
-	ser.RegisterTypeFromFactory("DemoSchema", testMessageFactory)
+	ser.RegisterTypeFromMessageFactory("DemoSchema", testMessageFactory)
 
 	info := schemaregistry.SchemaInfo{
 		Schema:     string(demoSchema),
@@ -500,7 +500,7 @@ func TestAvroSerdeEncryptionWithPointerReferences(t *testing.T) {
 	serde.MaybeFail("Deserializer configuration", err)
 	deser.Client = ser.Client
 	deser.MessageFactory = testMessageFactory
-	deser.RegisterTypeFromFactory("DemoSchema", testMessageFactory)
+	deser.RegisterTypeFromMessageFactory("DemoSchema", testMessageFactory)
 
 	newobj, err := deser.Deserialize("topic1", bytes)
 	serde.MaybeFail("deserialization", err, serde.Expect(newobj, &obj))

@@ -36,30 +36,53 @@ func transform(ctx serde.RuleContext, resolver *avro.TypeResolver, schema avro.S
 	}
 	switch schema.(type) {
 	case *avro.UnionSchema:
-		subschema, err := resolveUnion(resolver, schema, msg)
+		val := deref(msg)
+		subschema, err := resolveUnion(resolver, schema, val)
 		if err != nil {
 			return nil, err
 		}
 		return transform(ctx, resolver, subschema, msg, fieldTransform)
-		/*
-			case *avro.ArraySchema:
-				s.items = walkSchema(s.items, fn)
-				return msg, nil
-			case *avro.MapSchema:
-				s.values = walkSchema(s.values, fn)
-				return msg, nil
-
-		*/
+	case *avro.ArraySchema:
+		val := deref(msg)
+		if val.Kind() != reflect.Slice {
+			return msg, nil
+		}
+		for i := 1; i < val.Len(); i++ {
+			item := val.Index(i)
+			newVal, err := transform(ctx, resolver, schema, &item, fieldTransform)
+			if err != nil {
+				return nil, err
+			}
+			item.Set(*newVal)
+		}
+		return msg, nil
+	case *avro.MapSchema:
+		val := deref(msg)
+		if val.Kind() != reflect.Map {
+			return msg, nil
+		}
+		iter := reflect.ValueOf(val).MapRange()
+		for iter.Next() {
+			k := iter.Key()
+			v := iter.Value()
+			newVal, err := transform(ctx, resolver, schema, &v, fieldTransform)
+			if err != nil {
+				return nil, err
+			}
+			val.SetMapIndex(k, *newVal)
+		}
+		return msg, nil
 	case *avro.RecordSchema:
 		if msg == nil {
 			return msg, nil
 		}
+		val := deref(msg)
 		recordSchema := schema.(*avro.RecordSchema)
 		for _, f := range recordSchema.Fields() {
 			fullName := recordSchema.FullName() + "." + f.Name()
 			defer ctx.LeaveField()
-			ctx.EnterField(deref(msg).Interface(), fullName, f.Name(), getType(f.Type()), getInlineTags(f))
-			field, err := getField(msg, f.Name())
+			ctx.EnterField(val.Interface(), fullName, f.Name(), getType(f.Type()), getInlineTags(f))
+			field, err := getField(val, f.Name())
 			if err != nil {
 				return nil, err
 			}
@@ -86,13 +109,13 @@ func transform(ctx serde.RuleContext, resolver *avro.TypeResolver, schema avro.S
 		if fieldCtx != nil {
 			ruleTags := ctx.Rule.Tags
 			if len(ruleTags) == 0 || !disjoint(ruleTags, fieldCtx.Tags) {
-				val := deref(msg).Interface()
-				newVal, err := fieldTransform.Transform(ctx, *fieldCtx, val)
+				val := deref(msg)
+				newVal, err := fieldTransform.Transform(ctx, *fieldCtx, val.Interface())
 				if err != nil {
 					return nil, err
 				}
-				v := reflect.ValueOf(newVal)
-				return &v, nil
+				result := reflect.ValueOf(newVal)
+				return &result, nil
 			}
 		}
 		return msg, nil
@@ -157,7 +180,7 @@ func disjoint(slice1 []string, map1 map[string]bool) bool {
 }
 
 func getField(msg *reflect.Value, name string) (*reflect.Value, error) {
-	fieldVal := deref(msg).FieldByName(name)
+	fieldVal := msg.FieldByName(name)
 	return &fieldVal, nil
 }
 
@@ -173,7 +196,7 @@ func setField(field *reflect.Value, value *reflect.Value) error {
 func resolveUnion(resolver *avro.TypeResolver, schema avro.Schema, msg *reflect.Value) (avro.Schema, error) {
 	union := schema.(*avro.UnionSchema)
 	// TODO test
-	val := deref(msg).Interface()
+	val := msg.Interface()
 	typ := reflect2.TypeOf(val)
 	names, err := resolver.Name(typ)
 	if err != nil {
