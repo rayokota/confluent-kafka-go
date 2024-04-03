@@ -300,8 +300,6 @@ message Pizza {
 
 	newobj, err := deser.Deserialize("topic1", bytes)
 	serde.MaybeFail("deserialization", err, serde.Expect(newobj.(proto.Message).ProtoReflect(), obj.ProtoReflect()))
-
-	serde.ClearRules()
 }
 
 func BenchmarkProtobufSerWithReference(b *testing.B) {

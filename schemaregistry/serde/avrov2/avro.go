@@ -202,7 +202,12 @@ func (s *Serde) FieldTransform(client schemaregistry.Client, ctx serde.RuleConte
 	if err != nil {
 		return nil, err
 	}
-	return transform(ctx, s.resolver, schema, msg, fieldTransform)
+	val := reflect.ValueOf(msg)
+	newVal, err := transform(ctx, s.resolver, schema, &val, fieldTransform)
+	if err != nil {
+		return nil, err
+	}
+	return newVal.Interface(), nil
 }
 
 func (s *Serde) toType(client schemaregistry.Client, schema schemaregistry.SchemaInfo) (avro.Schema, string, error) {

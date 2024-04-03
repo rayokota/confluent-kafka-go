@@ -25,8 +25,8 @@ import (
 	"strings"
 )
 
-func transform(ctx serde.RuleContext, resolver *avro.TypeResolver, schema avro.Schema, msg interface{},
-	fieldTransform serde.FieldTransform) (interface{}, error) {
+func transform(ctx serde.RuleContext, resolver *avro.TypeResolver, schema avro.Schema, msg *reflect.Value,
+	fieldTransform serde.FieldTransform) (*reflect.Value, error) {
 	if schema == nil {
 		return msg, nil
 	}
@@ -54,25 +54,35 @@ func transform(ctx serde.RuleContext, resolver *avro.TypeResolver, schema avro.S
 		if msg == nil {
 			return msg, nil
 		}
+		var msgObj interface{}
+		if msg.Kind() == reflect.Pointer {
+			msgObj = msg.Elem().Interface()
+		} else {
+			msgObj = msg.Interface()
+		}
 		recordSchema := schema.(*avro.RecordSchema)
 		for _, f := range recordSchema.Fields() {
 			fullName := recordSchema.FullName() + "." + f.Name()
 			defer ctx.LeaveField()
-			ctx.EnterField(msg, fullName, f.Name(), getType(f.Type()), getInlineTags(f))
-			val := getField(msg, f.Name())
-			newVal, err := transform(ctx, resolver, f.Type(), val, fieldTransform)
+			ctx.EnterField(msgObj, fullName, f.Name(), getType(f.Type()), getInlineTags(f))
+			field, err := getField(msg, f.Name())
+			if err != nil {
+				return nil, err
+			}
+			newVal, err := transform(ctx, resolver, f.Type(), field, fieldTransform)
 			if err != nil {
 				return nil, err
 			}
 			if ctx.Rule.Kind == "CONDITION" {
-				newBool, ok := newVal.(bool)
-				if ok && !newBool {
+				// TODO test
+				newBool := newVal.Elem().Bool()
+				if !newBool {
 					return nil, serde.RuleConditionErr{
 						Rule: ctx.Rule,
 					}
 				}
 			}
-			err = setField(msg, f.Name(), newVal)
+			err = setField(field, newVal)
 			if err != nil {
 				return nil, err
 			}
@@ -82,7 +92,18 @@ func transform(ctx serde.RuleContext, resolver *avro.TypeResolver, schema avro.S
 		if fieldCtx != nil {
 			ruleTags := ctx.Rule.Tags
 			if len(ruleTags) == 0 || !disjoint(ruleTags, fieldCtx.Tags) {
-				return fieldTransform.Transform(ctx, *fieldCtx, msg)
+				var val interface{}
+				if msg.Kind() == reflect.Pointer {
+					val = msg.Elem().Interface()
+				} else {
+					val = msg.Interface()
+				}
+				newVal, err := fieldTransform.Transform(ctx, *fieldCtx, val)
+				if err != nil {
+					return nil, err
+				}
+				v := reflect.ValueOf(newVal)
+				return &v, nil
 			}
 		}
 		return msg, nil
@@ -146,28 +167,31 @@ func disjoint(slice1 []string, map1 map[string]bool) bool {
 	return true
 }
 
-func getField(msg interface{}, name string) interface{} {
-	v := reflect.ValueOf(msg)
-	if v.Kind() == reflect.Pointer {
-		v = v.Elem()
+func getField(msg *reflect.Value, name string) (*reflect.Value, error) {
+	var v reflect.Value
+	if msg.Kind() == reflect.Pointer {
+		v = msg.Elem()
+	} else {
+		v = *msg
 	}
 	fieldVal := v.FieldByName(name)
-	return fieldVal.Interface()
+	return &fieldVal, nil
 }
 
-func setField(msg interface{}, name string, value interface{}) error {
-	v := reflect.ValueOf(msg)
-	if v.Kind() == reflect.Pointer {
-		v = v.Elem()
+func setField(field *reflect.Value, value *reflect.Value) error {
+	v := field
+	if !v.CanAddr() {
+		return fmt.Errorf("cannot assign to the item passed, item must be a pointer")
 	}
-	fieldVal := v.FieldByName(name)
-	fieldVal.Set(reflect.ValueOf(value))
+	v.Set(*value)
 	return nil
 }
 
-func resolveUnion(resolver *avro.TypeResolver, schema avro.Schema, msg interface{}) (avro.Schema, error) {
+func resolveUnion(resolver *avro.TypeResolver, schema avro.Schema, msg *reflect.Value) (avro.Schema, error) {
 	union := schema.(*avro.UnionSchema)
-	typ := reflect2.TypeOf(msg)
+	// TODO test
+	val := msg.Elem().Interface()
+	typ := reflect2.TypeOf(val)
 	names, err := resolver.Name(typ)
 	if err != nil {
 		return nil, err
@@ -183,9 +207,4 @@ func resolveUnion(resolver *avro.TypeResolver, schema avro.Schema, msg interface
 		}
 	}
 	return nil, fmt.Errorf("avro: unknown union type %s", names[0])
-}
-
-func doFieldTransform(ctx serde.RuleContext, msg interface{}, fieldTransform serde.FieldTransform,
-	fieldCtx *serde.FieldContext) (interface{}, error) {
-	return nil, nil
 }
