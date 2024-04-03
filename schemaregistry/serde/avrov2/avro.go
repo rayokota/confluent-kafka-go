@@ -69,7 +69,10 @@ func NewSerializer(client schemaregistry.Client, serdeType serde.Type, conf *Ser
 		return nil, err
 	}
 	for _, rule := range serde.GetRuleExecutors() {
-		rule.Configure(client.Config(), conf.RuleConfig)
+		err = rule.Configure(client.Config(), conf.RuleConfig)
+		if err != nil {
+			return nil, err
+		}
 		fieldRule, ok := rule.(serde.FieldRuleExecutor)
 		if ok {
 			fieldRule.SetFieldTransformer(func(ctx serde.RuleContext, fieldTransform serde.FieldTransform, msg interface{}) (interface{}, error) {
@@ -137,7 +140,10 @@ func NewDeserializer(client schemaregistry.Client, serdeType serde.Type, conf *D
 		return nil, err
 	}
 	for _, rule := range serde.GetRuleExecutors() {
-		rule.Configure(client.Config(), conf.RuleConfig)
+		err = rule.Configure(client.Config(), conf.RuleConfig)
+		if err != nil {
+			return nil, err
+		}
 		fieldRule, ok := rule.(serde.FieldRuleExecutor)
 		if ok {
 			fieldRule.SetFieldTransformer(func(ctx serde.RuleContext, fieldTransform serde.FieldTransform, msg interface{}) (interface{}, error) {
@@ -150,7 +156,7 @@ func NewDeserializer(client schemaregistry.Client, serdeType serde.Type, conf *D
 
 // Deserialize implements deserialization of generic Avro data
 func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, error) {
-	if payload == nil {
+	if len(payload) == 0 {
 		return nil, nil
 	}
 	info, err := s.GetSchema(topic, payload)
@@ -182,7 +188,7 @@ func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, e
 
 // DeserializeInto implements deserialization of generic Avro data to the given object
 func (s *Deserializer) DeserializeInto(topic string, payload []byte, msg interface{}) error {
-	if payload == nil {
+	if len(payload) == 0 {
 		return nil
 	}
 	info, err := s.GetSchema(topic, payload)
@@ -193,7 +199,15 @@ func (s *Deserializer) DeserializeInto(topic string, payload []byte, msg interfa
 	if err != nil {
 		return err
 	}
+	subject, err := s.SubjectNameStrategy(topic, s.SerdeType, info)
+	if err != nil {
+		return err
+	}
 	err = avro.Unmarshal(writer, payload[5:], msg)
+	if err != nil {
+		return err
+	}
+	msg, err = s.ExecuteRules(subject, topic, serde.Read, nil, &info, msg)
 	return err
 }
 

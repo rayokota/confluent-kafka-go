@@ -162,7 +162,10 @@ func NewSerializer(client schemaregistry.Client, serdeType serde.Type, conf *Ser
 		return nil, err
 	}
 	for _, rule := range serde.GetRuleExecutors() {
-		rule.Configure(client.Config(), conf.RuleConfig)
+		err = rule.Configure(client.Config(), conf.RuleConfig)
+		if err != nil {
+			return nil, err
+		}
 		fieldRule, ok := rule.(serde.FieldRuleExecutor)
 		if ok {
 			fieldRule.SetFieldTransformer(s.FieldTransform)
@@ -501,7 +504,10 @@ func NewDeserializer(client schemaregistry.Client, serdeType serde.Type, conf *D
 		return nil, err
 	}
 	for _, rule := range serde.GetRuleExecutors() {
-		rule.Configure(client.Config(), conf.RuleConfig)
+		err = rule.Configure(client.Config(), conf.RuleConfig)
+		if err != nil {
+			return nil, err
+		}
 		fieldRule, ok := rule.(serde.FieldRuleExecutor)
 		if ok {
 			fieldRule.SetFieldTransformer(func(ctx serde.RuleContext, fieldTransform serde.FieldTransform, msg interface{}) (interface{}, error) {
@@ -564,8 +570,20 @@ func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, e
 
 // DeserializeInto implements deserialization of Protobuf data to the given object
 func (s *Deserializer) DeserializeInto(topic string, payload []byte, msg interface{}) error {
-	if payload == nil {
+	if len(payload) == 0 {
 		return nil
+	}
+	info, err := s.GetSchema(topic, payload)
+	if err != nil {
+		return err
+	}
+	bytesRead, _, err := readMessageIndexes(payload[5:])
+	if err != nil {
+		return err
+	}
+	subject, err := s.SubjectNameStrategy(topic, s.SerdeType, info)
+	if err != nil {
+		return err
 	}
 	var protoMsg proto.Message
 	switch t := msg.(type) {
@@ -574,11 +592,18 @@ func (s *Deserializer) DeserializeInto(topic string, payload []byte, msg interfa
 	default:
 		return fmt.Errorf("deserialization target must be a protobuf message. Got '%v'", t)
 	}
-	bytesRead, _, err := readMessageIndexes(payload[5:])
+	err = proto.Unmarshal(payload[5+bytesRead:], protoMsg)
+	msg, err = s.ExecuteRules(subject, topic, serde.Read, nil, &info, protoMsg)
 	if err != nil {
 		return err
 	}
-	return proto.Unmarshal(payload[5+bytesRead:], protoMsg)
+	switch t := msg.(type) {
+	case proto.Message:
+		protoMsg = t
+	default:
+		return fmt.Errorf("serialization target must be a protobuf message. Got '%v'", t)
+	}
+	return nil
 }
 
 func readMessageIndexes(payload []byte) (int, []int, error) {

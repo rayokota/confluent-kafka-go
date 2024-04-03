@@ -17,6 +17,12 @@
 package jsonschema
 
 import (
+	_ "github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/rules/encryption/awskms"
+	_ "github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/rules/encryption/azurekms"
+	_ "github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/rules/encryption/gcpkms"
+	_ "github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/rules/encryption/hcvault"
+	_ "github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/rules/encryption/localkms"
+
 	"encoding/json"
 	"github.com/invopop/jsonschema"
 	"strings"
@@ -25,6 +31,39 @@ import (
 	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry"
 	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/serde"
 	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/test"
+)
+
+const (
+	rootSchema = `
+{
+  "name": "NestedTestRecord",
+  "type": "record",
+  "fields": [
+    {
+      "name": "OtherField",
+      "type": "DemoSchema"
+    }
+  ]
+}
+`
+	demoSchema = `
+{
+  "type": "object",
+  "properties": {
+    "IntField": { "type": "integer" },
+    "DoubleField": { "type": "number" },
+    "StringField": { 
+       "type": "string",
+       "confluent:tags": [ "PII" ]
+    },
+    "BoolField": { "type": "boolean" },
+    "BytesField": { 
+        "type": "string",
+        "contentEncoding": "base64"
+    }
+  }
+}
+`
 )
 
 func TestJSONSchemaSerdeWithSimple(t *testing.T) {
@@ -129,6 +168,79 @@ func TestFailingJSONSchemaValidationWithSimple(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "jsonschema") {
 		t.Errorf("Expected validation error, found %s", err)
 	}
+}
+
+func TestJsonSchemaSerdeEncryption(t *testing.T) {
+	serde.MaybeFail = serde.InitFailFunc(t)
+	var err error
+
+	conf := schemaregistry.NewConfig("mock://")
+
+	client, err := schemaregistry.NewClient(conf)
+	serde.MaybeFail("Schema Registry configuration", err)
+
+	serConfig := NewSerializerConfig()
+	serConfig.AutoRegisterSchemas = false
+	serConfig.UseLatestVersion = true
+	serConfig.RuleConfig = map[string]string{
+		"secret": "foo",
+	}
+	ser, err := NewSerializer(client, serde.ValueSerde, serConfig)
+	serde.MaybeFail("Serializer configuration", err)
+
+	encRule := schemaregistry.Rule{
+		Name: "test-encrypt",
+		Kind: "TRANSFORM",
+		Mode: "WRITEREAD",
+		Type: "ENCRYPT",
+		Tags: []string{"PII"},
+		Params: map[string]string{
+			"encrypt.kek.name":   "kek1",
+			"encrypt.kms.type":   "local-kms",
+			"encrypt.kms.key.id": "mykey",
+		},
+		OnFailure: "ERROR,NONE",
+	}
+	ruleSet := schemaregistry.RuleSet{
+		DomainRules: []schemaregistry.Rule{encRule},
+	}
+
+	info := schemaregistry.SchemaInfo{
+		Schema:     demoSchema,
+		SchemaType: "AVRO",
+		Ruleset:    &ruleSet,
+	}
+
+	id, err := client.Register("topic1-value", info, false)
+	serde.MaybeFail("Schema registration", err)
+	if id <= 0 {
+		t.Errorf("Expected valid schema id, found %d", id)
+	}
+
+	obj := JSONDemoSchema{}
+	obj.IntField = 123
+	obj.DoubleField = 45.67
+	obj.StringField = "hi"
+	obj.BoolField = true
+	obj.BytesField = []byte{1, 2}
+
+	bytes, err := ser.Serialize("topic1", &obj)
+	serde.MaybeFail("serialization", err)
+
+	// Reset encrypted field
+	obj.StringField = "hi"
+
+	deserConfig := NewDeserializerConfig()
+	deserConfig.RuleConfig = map[string]string{
+		"secret": "foo",
+	}
+	deser, err := NewDeserializer(client, serde.ValueSerde, deserConfig)
+	serde.MaybeFail("Deserializer configuration", err)
+	deser.Client = ser.Client
+
+	var newobj JSONDemoSchema
+	err = deser.DeserializeInto("topic1", bytes, &newobj)
+	serde.MaybeFail("deserialization", err, serde.Expect(&newobj, &obj))
 }
 
 type DifferentJSONDemoSchema struct {
