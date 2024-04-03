@@ -278,7 +278,7 @@ func (s *Serde) toJSONSchema(c schemaregistry.Client, schema schemaregistry.Sche
 	compiler.LoadURL = func(url string) (io.ReadCloser, error) {
 		return io.NopCloser(strings.NewReader(deps[url])), nil
 	}
-	url := "schema.json"
+	url := "mem://input"
 	if err := compiler.AddResource(url, strings.NewReader(schema.Schema)); err != nil {
 		return nil, err
 	}

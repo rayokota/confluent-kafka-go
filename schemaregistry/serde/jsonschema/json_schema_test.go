@@ -36,14 +36,10 @@ import (
 const (
 	rootSchema = `
 {
-  "name": "NestedTestRecord",
-  "type": "record",
-  "fields": [
-    {
-      "name": "OtherField",
-      "type": "DemoSchema"
-    }
-  ]
+  "type": "object",
+  "properties": {
+    "OtherField": { "$ref": "DemoSchema" }
+  }
 }
 `
 	demoSchema = `
@@ -170,7 +166,7 @@ func TestFailingJSONSchemaValidationWithSimple(t *testing.T) {
 	}
 }
 
-func TestJsonSchemaSerdeEncryption(t *testing.T) {
+func TestJSONSchemaSerdeEncryption(t *testing.T) {
 	serde.MaybeFail = serde.InitFailFunc(t)
 	var err error
 
@@ -207,7 +203,7 @@ func TestJsonSchemaSerdeEncryption(t *testing.T) {
 
 	info := schemaregistry.SchemaInfo{
 		Schema:     demoSchema,
-		SchemaType: "AVRO",
+		SchemaType: "JSON",
 		Ruleset:    &ruleSet,
 	}
 
@@ -239,6 +235,99 @@ func TestJsonSchemaSerdeEncryption(t *testing.T) {
 	deser.Client = ser.Client
 
 	var newobj JSONDemoSchema
+	err = deser.DeserializeInto("topic1", bytes, &newobj)
+	serde.MaybeFail("deserialization", err, serde.Expect(&newobj, &obj))
+}
+
+func TestJSONSchemaSerdeEncryptionWithReferences(t *testing.T) {
+	serde.MaybeFail = serde.InitFailFunc(t)
+	var err error
+
+	conf := schemaregistry.NewConfig("mock://")
+
+	client, err := schemaregistry.NewClient(conf)
+	serde.MaybeFail("Schema Registry configuration", err)
+
+	serConfig := NewSerializerConfig()
+	serConfig.AutoRegisterSchemas = false
+	serConfig.UseLatestVersion = true
+	serConfig.RuleConfig = map[string]string{
+		"secret": "foo",
+	}
+	ser, err := NewSerializer(client, serde.ValueSerde, serConfig)
+	serde.MaybeFail("Serializer configuration", err)
+
+	info := schemaregistry.SchemaInfo{
+		Schema:     string(demoSchema),
+		SchemaType: "JSON",
+	}
+
+	id, err := client.Register("demo-value", info, false)
+	serde.MaybeFail("Schema registration", err)
+	if id <= 0 {
+		t.Errorf("Expected valid schema id, found %d", id)
+	}
+
+	encRule := schemaregistry.Rule{
+		Name: "test-encrypt",
+		Kind: "TRANSFORM",
+		Mode: "WRITEREAD",
+		Type: "ENCRYPT",
+		Tags: []string{"PII"},
+		Params: map[string]string{
+			"encrypt.kek.name":   "kek1",
+			"encrypt.kms.type":   "local-kms",
+			"encrypt.kms.key.id": "mykey",
+		},
+		OnFailure: "ERROR,NONE",
+	}
+	ruleSet := schemaregistry.RuleSet{
+		DomainRules: []schemaregistry.Rule{encRule},
+	}
+
+	info = schemaregistry.SchemaInfo{
+		Schema:     string(rootSchema),
+		SchemaType: "JSON",
+		References: []schemaregistry.Reference{
+			schemaregistry.Reference{
+				Name:    "DemoSchema",
+				Subject: "demo-value",
+				Version: 1,
+			},
+		},
+		Ruleset: &ruleSet,
+	}
+
+	id, err = client.Register("topic1-value", info, false)
+	serde.MaybeFail("Schema registration", err)
+	if id <= 0 {
+		t.Errorf("Expected valid schema id, found %d", id)
+	}
+
+	nested := JSONDemoSchema{}
+	nested.IntField = 123
+	nested.DoubleField = 45.67
+	nested.StringField = "hi"
+	nested.BoolField = true
+	nested.BytesField = []byte{1, 2}
+	obj := JSONNestedTestRecord{}
+	obj.OtherField = nested
+
+	bytes, err := ser.Serialize("topic1", &obj)
+	serde.MaybeFail("serialization", err)
+
+	// Reset encrypted field
+	obj.OtherField.StringField = "hi"
+
+	deserConfig := NewDeserializerConfig()
+	deserConfig.RuleConfig = map[string]string{
+		"secret": "foo",
+	}
+	deser, err := NewDeserializer(client, serde.ValueSerde, deserConfig)
+	serde.MaybeFail("Deserializer configuration", err)
+	deser.Client = ser.Client
+
+	var newobj JSONNestedTestRecord
 	err = deser.DeserializeInto("topic1", bytes, &newobj)
 	serde.MaybeFail("deserialization", err, serde.Expect(&newobj, &obj))
 }
