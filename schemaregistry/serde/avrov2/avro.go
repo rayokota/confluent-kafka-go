@@ -197,7 +197,11 @@ func (s *Deserializer) DeserializeInto(topic string, payload []byte, msg interfa
 	return err
 }
 
-func (s *Serde) RegisterType(name string, messageFactory serde.MessageFactory) error {
+func (s *Serde) RegisterType(name string, msgType interface{}) {
+	s.resolver.Register(name, msgType)
+}
+
+func (s *Serde) RegisterTypeFromFactory(name string, messageFactory serde.MessageFactory) error {
 	if messageFactory == nil {
 		return errors.New("MessageFactory is nil")
 	}
@@ -206,7 +210,7 @@ func (s *Serde) RegisterType(name string, messageFactory serde.MessageFactory) e
 		return err
 	}
 	v := reflect.ValueOf(typ)
-	s.resolver.Register(name, v.Elem().Interface())
+	s.RegisterType(name, v.Elem().Interface())
 	return nil
 }
 
