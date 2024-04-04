@@ -21,7 +21,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"log"
-	"net/url"
 	"reflect"
 	"strings"
 
@@ -636,15 +635,7 @@ func ResolveReferences(c schemaregistry.Client, schema schemaregistry.SchemaInfo
 			Metadata:   metadata.Metadata,
 			Ruleset:    metadata.Ruleset,
 		}
-		depName := ref.Name
-		u, err := url.Parse(depName)
-		if err != nil {
-			return err
-		}
-		if !u.IsAbs() {
-			depName = "mem://input/" + depName
-		}
-		deps[depName] = metadata.Schema
+		deps[ref.Name] = metadata.Schema
 		err = ResolveReferences(c, info, deps)
 		if err != nil {
 			return err

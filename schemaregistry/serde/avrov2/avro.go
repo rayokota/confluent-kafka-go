@@ -316,7 +316,13 @@ func structToSchema(t reflect.Type, tags ...reflect.StructTag) (avro.Schema, err
 			} else if fName == "-" {
 				continue
 			}
-			schField, err := avro.NewField(fName, s)
+			defaultVal := avroDefaultField(s)
+			var schField *avro.Field
+			if defaultVal != nil {
+				schField, err = avro.NewField(fName, s, avro.WithDefault(defaultVal))
+			} else {
+				schField, err = avro.NewField(fName, s)
+			}
 			if err != nil {
 				return nil, fmt.Errorf("avro.NewField: %w", err)
 			}
@@ -384,5 +390,28 @@ func structToSchema(t reflect.Type, tags ...reflect.StructTag) (avro.Schema, err
 		return avro.NewPrimitiveSchema(avro.String, nil), nil
 	default:
 		return nil, fmt.Errorf("unknown type %s", t.Kind().String())
+	}
+}
+
+func avroDefaultField(s avro.Schema) any {
+	switch s.Type() {
+	case avro.String, avro.Bytes, avro.Enum, avro.Fixed:
+		return ""
+	case avro.Boolean:
+		return false
+	case avro.Int:
+		return int(0)
+	case avro.Long:
+		return int64(0)
+	case avro.Float:
+		return float32(0.0)
+	case avro.Double:
+		return float64(0.0)
+	case avro.Map:
+		return make(map[string]any)
+	case avro.Array:
+		return []any{}
+	default:
+		return nil
 	}
 }

@@ -31,6 +31,10 @@ import (
 	jsonschema2 "github.com/santhosh-tekuri/jsonschema/v5"
 )
 
+const (
+	defaultBaseURL = "mem://input/"
+)
+
 // Serializer represents a JSON Schema serializer
 type Serializer struct {
 	serde.BaseSerializer
@@ -276,13 +280,13 @@ func (s *Serde) toJSONSchema(c schemaregistry.Client, schema schemaregistry.Sche
 	compiler := jsonschema2.NewCompiler()
 	compiler.RegisterExtension("confluent:tags", tagsMeta, tagsCompiler{})
 	compiler.LoadURL = func(url string) (io.ReadCloser, error) {
+		url = strings.TrimPrefix(url, defaultBaseURL)
 		return io.NopCloser(strings.NewReader(deps[url])), nil
 	}
-	url := "mem://input"
-	if err := compiler.AddResource(url, strings.NewReader(schema.Schema)); err != nil {
+	if err := compiler.AddResource(defaultBaseURL, strings.NewReader(schema.Schema)); err != nil {
 		return nil, err
 	}
-	jsonType, err := compiler.Compile(url)
+	jsonType, err := compiler.Compile(defaultBaseURL)
 	if err != nil {
 		return nil, err
 	}
