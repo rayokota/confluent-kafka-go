@@ -24,7 +24,7 @@ import (
 
 const (
 	prefix    = "hcvault://"
-	tokenId   = "token.id"
+	tokenID   = "token.id"
 	namespace = "namespace"
 )
 
@@ -46,7 +46,7 @@ func (l *hcvaultDriver) NewKMSClient(config map[string]string, keyURL *string) (
 		uriPrefix = *keyURL
 	}
 	ns := config[namespace]
-	token := config[tokenId]
+	token := config[tokenID]
 	if token == "" {
 		ns = os.Getenv("VAULT_NAMESPACE")
 		token = os.Getenv("VAULT_TOKEN")

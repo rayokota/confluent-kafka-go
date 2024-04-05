@@ -28,9 +28,9 @@ import (
 const (
 	prefix       = "gcp-kms://"
 	accountType  = "account.type"
-	clientId     = "client.id"
+	clientID     = "client.id"
 	clientEmail  = "client.email"
-	privateKeyId = "private.key.id"
+	privateKeyID = "private.key.id"
 	privateKey   = "private.key"
 )
 
@@ -56,9 +56,9 @@ func (l *gcpDriver) NewKMSClient(config map[string]string, keyURL *string) (regi
 	if !ok {
 		account = "service_account"
 	}
-	id, ok1 := config[clientId]
+	id, ok1 := config[clientID]
 	email, ok2 := config[clientEmail]
-	keyID, ok3 := config[privateKeyId]
+	keyID, ok3 := config[privateKeyID]
 	key, ok4 := config[privateKey]
 	if ok1 && ok2 && ok3 && ok4 {
 		creds := credentials{
@@ -77,9 +77,8 @@ func (l *gcpDriver) NewKMSClient(config map[string]string, keyURL *string) (regi
 	}
 	if clientOption != nil {
 		return kms.NewClientWithOptions(context.Background(), uriPrefix, *clientOption)
-	} else {
-		return kms.NewClientWithOptions(context.Background(), uriPrefix)
 	}
+	return kms.NewClientWithOptions(context.Background(), uriPrefix)
 }
 
 type credentials struct {

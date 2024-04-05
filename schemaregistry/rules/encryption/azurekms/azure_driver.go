@@ -25,8 +25,8 @@ import (
 
 const (
 	prefix       = "azure-kms://"
-	tenantId     = "tenant.id"
-	clientId     = "client.id"
+	tenantID     = "tenant.id"
+	clientID     = "client.id"
 	clientSecret = "client.secret"
 )
 
@@ -49,9 +49,9 @@ func (l *azureDriver) NewKMSClient(config map[string]string, keyURL *string) (re
 	}
 	var creds azcore.TokenCredential
 	var err error
-	tenant, ok := config[tenantId]
+	tenant, ok := config[tenantID]
 	if ok {
-		client, ok := config[clientId]
+		client, ok := config[clientID]
 		if ok {
 			secret, ok := config[clientSecret]
 			if ok {

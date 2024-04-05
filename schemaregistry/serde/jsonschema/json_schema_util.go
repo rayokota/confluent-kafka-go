@@ -60,7 +60,7 @@ func transform(ctx serde.RuleContext, schema *jsonschema2.Schema, path string, m
 			return transform(ctx, subschema, path, msg, fieldTransform)
 		}
 	}
-	if isModernJsonSchema(schema.Draft) {
+	if isModernJSONSchema(schema.Draft) {
 		sch := schema.Items2020
 		if sch != nil {
 			return transformArray(ctx, msg, sch, path, fieldTransform)
@@ -155,7 +155,7 @@ func validateSubschemas(subschemas []*jsonschema2.Schema, msg *reflect.Value) (*
 	return nil, nil
 }
 
-func isModernJsonSchema(draft *jsonschema2.Draft) bool {
+func isModernJSONSchema(draft *jsonschema2.Draft) bool {
 	u := draft.URL()
 	return u == "https://json-schema.org/draft/2020-12/schema" ||
 		u == "https://json-schema.org/draft/2019-09/schema"
@@ -177,9 +177,8 @@ func getType(schema *jsonschema2.Schema) serde.FieldType {
 	case "object":
 		if len(schema.Properties) == 0 {
 			return serde.TypeMap
-		} else {
-			return serde.TypeRecord
 		}
+		return serde.TypeRecord
 	case "array":
 		return serde.TypeArray
 	case "string":

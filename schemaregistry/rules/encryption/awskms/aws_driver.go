@@ -25,7 +25,7 @@ import (
 
 const (
 	prefix          = "aws-kms://"
-	accessKeyId     = "access.key.id"
+	accessKeyID     = "access.key.id"
 	secretAccessKey = "secret.access.key"
 )
 
@@ -47,7 +47,7 @@ func (l *awsDriver) NewKMSClient(conf map[string]string, keyURL *string) (regist
 		uriPrefix = *keyURL
 	}
 	var creds aws.CredentialsProvider
-	key, ok := conf[accessKeyId]
+	key, ok := conf[accessKeyID]
 	if ok {
 		secret, ok := conf[secretAccessKey]
 		if ok {
