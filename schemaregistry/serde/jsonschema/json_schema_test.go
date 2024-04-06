@@ -258,7 +258,7 @@ func TestJSONSchemaSerdeEncryptionWithReferences(t *testing.T) {
 	serde.MaybeFail("Serializer configuration", err)
 
 	info := schemaregistry.SchemaInfo{
-		Schema:     string(demoSchema),
+		Schema:     demoSchema,
 		SchemaType: "JSON",
 	}
 
@@ -286,7 +286,7 @@ func TestJSONSchemaSerdeEncryptionWithReferences(t *testing.T) {
 	}
 
 	info = schemaregistry.SchemaInfo{
-		Schema:     string(rootSchema),
+		Schema:     rootSchema,
 		SchemaType: "JSON",
 		References: []schemaregistry.Reference{
 			schemaregistry.Reference{

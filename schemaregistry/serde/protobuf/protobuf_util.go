@@ -51,32 +51,10 @@ func transform(ctx serde.RuleContext, descriptor protoreflect.Descriptor, msg in
 		clone := proto.Clone(m)
 		fields := clone.ProtoReflect().Descriptor().Fields()
 		for i := 0; i < fields.Len(); i++ {
-			fd := fields.Get(i)
-			schemaFd := desc.Fields().ByName(fd.Name())
-			defer ctx.LeaveField()
-			ctx.EnterField(msg, string(fd.FullName()), string(fd.Name()), getType(fd), getInlineTags(schemaFd))
-			value := clone.ProtoReflect().Get(fd)
-			d := desc
-			md, ok := desc.(protoreflect.MessageDescriptor)
-			if ok {
-				// Pass the schema-based descriptor which has the tags
-				d = md
-			}
-			newValue, err := transform(ctx, d, value, fieldTransform)
+			err := transformField(ctx, fields, i, desc, msg, clone, fieldTransform)
 			if err != nil {
 				return nil, err
 			}
-			newProtoValue := newValue.(protoreflect.Value)
-			if ctx.Rule.Kind == "CONDITION" {
-				i := newProtoValue.Interface()
-				newBool, ok := i.(bool)
-				if ok && !newBool {
-					return nil, serde.RuleConditionErr{
-						Rule: ctx.Rule,
-					}
-				}
-			}
-			clone.ProtoReflect().Set(fd, newProtoValue)
 		}
 		return clone, nil
 	}
@@ -93,6 +71,37 @@ func transform(ctx serde.RuleContext, descriptor protoreflect.Descriptor, msg in
 		}
 	}
 	return msg, nil
+}
+
+func transformField(ctx serde.RuleContext, fields protoreflect.FieldDescriptors, i int, desc protoreflect.MessageDescriptor,
+	msg interface{}, clone proto.Message, fieldTransform serde.FieldTransform) error {
+	fd := fields.Get(i)
+	schemaFd := desc.Fields().ByName(fd.Name())
+	defer ctx.LeaveField()
+	ctx.EnterField(msg, string(fd.FullName()), string(fd.Name()), getType(fd), getInlineTags(schemaFd))
+	value := clone.ProtoReflect().Get(fd)
+	d := desc
+	md, ok := desc.(protoreflect.MessageDescriptor)
+	if ok {
+		// Pass the schema-based descriptor which has the tags
+		d = md
+	}
+	newValue, err := transform(ctx, d, value, fieldTransform)
+	if err != nil {
+		return err
+	}
+	newProtoValue := newValue.(protoreflect.Value)
+	if ctx.Rule.Kind == "CONDITION" {
+		i := newProtoValue.Interface()
+		newBool, ok := i.(bool)
+		if ok && !newBool {
+			return serde.RuleConditionErr{
+				Rule: ctx.Rule,
+			}
+		}
+	}
+	clone.ProtoReflect().Set(fd, newProtoValue)
+	return nil
 }
 
 func getType(fd protoreflect.FieldDescriptor) serde.FieldType {

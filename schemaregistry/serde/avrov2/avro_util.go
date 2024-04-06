@@ -79,27 +79,7 @@ func transform(ctx serde.RuleContext, resolver *avro.TypeResolver, schema avro.S
 		val := deref(msg)
 		recordSchema := schema.(*avro.RecordSchema)
 		for _, f := range recordSchema.Fields() {
-			fullName := recordSchema.FullName() + "." + f.Name()
-			defer ctx.LeaveField()
-			ctx.EnterField(val.Interface(), fullName, f.Name(), getType(f.Type()), getInlineTags(f))
-			field, err := getField(val, f.Name())
-			if err != nil {
-				return nil, err
-			}
-			newVal, err := transform(ctx, resolver, f.Type(), field, fieldTransform)
-			if err != nil {
-				return nil, err
-			}
-			if ctx.Rule.Kind == "CONDITION" {
-				// TODO test
-				newBool := deref(newVal)
-				if newBool.Kind() == reflect.Bool && !newBool.Bool() {
-					return nil, serde.RuleConditionErr{
-						Rule: ctx.Rule,
-					}
-				}
-			}
-			err = setField(field, newVal)
+			err := transformField(ctx, resolver, recordSchema, f, val, fieldTransform)
 			if err != nil {
 				return nil, err
 			}
@@ -120,6 +100,35 @@ func transform(ctx serde.RuleContext, resolver *avro.TypeResolver, schema avro.S
 		}
 		return msg, nil
 	}
+}
+
+func transformField(ctx serde.RuleContext, resolver *avro.TypeResolver, recordSchema *avro.RecordSchema, f *avro.Field,
+	val *reflect.Value, fieldTransform serde.FieldTransform) error {
+	fullName := recordSchema.FullName() + "." + f.Name()
+	defer ctx.LeaveField()
+	ctx.EnterField(val.Interface(), fullName, f.Name(), getType(f.Type()), getInlineTags(f))
+	field, err := getField(val, f.Name())
+	if err != nil {
+		return err
+	}
+	newVal, err := transform(ctx, resolver, f.Type(), field, fieldTransform)
+	if err != nil {
+		return err
+	}
+	if ctx.Rule.Kind == "CONDITION" {
+		// TODO test
+		newBool := deref(newVal)
+		if newBool.Kind() == reflect.Bool && !newBool.Bool() {
+			return serde.RuleConditionErr{
+				Rule: ctx.Rule,
+			}
+		}
+	}
+	err = setField(field, newVal)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func getType(schema avro.Schema) serde.FieldType {

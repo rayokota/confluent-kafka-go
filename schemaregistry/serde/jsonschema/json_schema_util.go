@@ -79,27 +79,7 @@ func transform(ctx serde.RuleContext, schema *jsonschema2.Schema, path string, m
 	case serde.TypeRecord:
 		val := deref(msg)
 		for propName, propSchema := range schema.Properties {
-			fullName := path + "." + propName
-			defer ctx.LeaveField()
-			ctx.EnterField(val.Interface(), fullName, propName, getType(propSchema), getInlineTags(propSchema))
-			field, err := getField(val, propName)
-			if err != nil {
-				return nil, err
-			}
-			newVal, err := transform(ctx, propSchema, fullName, field, fieldTransform)
-			if err != nil {
-				return nil, err
-			}
-			if ctx.Rule.Kind == "CONDITION" {
-				// TODO test
-				newBool := deref(newVal)
-				if newBool.Kind() == reflect.Bool && !newBool.Bool() {
-					return nil, serde.RuleConditionErr{
-						Rule: ctx.Rule,
-					}
-				}
-			}
-			err = setField(field, newVal)
+			err := transformField(ctx, path, propName, val, propSchema, fieldTransform)
 			if err != nil {
 				return nil, err
 			}
@@ -122,6 +102,35 @@ func transform(ctx serde.RuleContext, schema *jsonschema2.Schema, path string, m
 	default:
 		return msg, nil
 	}
+}
+
+func transformField(ctx serde.RuleContext, path string, propName string, val *reflect.Value,
+	propSchema *jsonschema2.Schema, fieldTransform serde.FieldTransform) error {
+	fullName := path + "." + propName
+	defer ctx.LeaveField()
+	ctx.EnterField(val.Interface(), fullName, propName, getType(propSchema), getInlineTags(propSchema))
+	field, err := getField(val, propName)
+	if err != nil {
+		return err
+	}
+	newVal, err := transform(ctx, propSchema, fullName, field, fieldTransform)
+	if err != nil {
+		return err
+	}
+	if ctx.Rule.Kind == "CONDITION" {
+		// TODO test
+		newBool := deref(newVal)
+		if newBool.Kind() == reflect.Bool && !newBool.Bool() {
+			return serde.RuleConditionErr{
+				Rule: ctx.Rule,
+			}
+		}
+	}
+	err = setField(field, newVal)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func transformArray(ctx serde.RuleContext, msg *reflect.Value, sch *jsonschema2.Schema, path string,

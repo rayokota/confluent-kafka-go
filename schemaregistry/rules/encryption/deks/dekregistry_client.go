@@ -209,13 +209,13 @@ func NewClient(conf *schemaregistry.Config) (Client, error) {
 	urlConf := conf.SchemaRegistryURL
 	// for testing
 	if strings.HasPrefix(urlConf, "mock://") {
-		url, err := url.Parse(urlConf)
+		u, err := url.Parse(urlConf)
 		if err != nil {
 			return nil, err
 		}
 		mock := &mockclient{
 			config: conf,
-			url:    url,
+			url:    u,
 		}
 		return mock, nil
 	}
@@ -358,7 +358,7 @@ func (c *client) GetDek(kekName string, subject string, algorithm string, delete
 	return dek, err
 }
 
-// RegisterVersionedDek registers versioned dek
+// RegisterDekVersion registers versioned dek
 func (c *client) RegisterDekVersion(kekName string, subject string, version int, algorithm string, encryptedKeyMaterial string) (dek Dek, err error) {
 	cacheKey := DekID{
 		KekName:   kekName,
@@ -397,7 +397,7 @@ func (c *client) RegisterDekVersion(kekName string, subject string, version int,
 	return dek, err
 }
 
-// GetVersionedDek returns the versioned dek
+// GetDekVersion returns the versioned dek
 // Returns dek object on success
 func (c *client) GetDekVersion(kekName string, subject string, version int, algorithm string, deleted bool) (dek Dek, err error) {
 	cacheKey := DekID{
