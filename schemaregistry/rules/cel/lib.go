@@ -18,23 +18,16 @@
 package cel
 
 import (
-	"bytes"
-	"math"
+	"github.com/google/uuid"
 	"net"
 	"net/mail"
-	"net/netip"
 	"net/url"
-	"strconv"
 	"strings"
 
 	"github.com/google/cel-go/cel"
-	"github.com/google/cel-go/common/overloads"
 	"github.com/google/cel-go/common/types"
 	"github.com/google/cel-go/common/types/ref"
-	"github.com/google/cel-go/common/types/traits"
 	"github.com/google/cel-go/ext"
-	"google.golang.org/protobuf/reflect/protoreflect"
-	"google.golang.org/protobuf/types/dynamicpb"
 )
 
 // DefaultEnv produces a cel.Env with the necessary cel.EnvOption and
@@ -44,88 +37,14 @@ func DefaultEnv() (*cel.Env, error) {
 	return cel.NewEnv(cel.Lib(lib{}))
 }
 
-// RequiredCELEnvOptions returns the options required to have expressions which
-// rely on the provided descriptor.
-func RequiredCELEnvOptions(fieldDesc protoreflect.FieldDescriptor) []cel.EnvOption {
-	if fieldDesc.IsMap() {
-		return append(
-			RequiredCELEnvOptions(fieldDesc.MapKey()),
-			RequiredCELEnvOptions(fieldDesc.MapValue())...,
-		)
-	}
-	if fieldDesc.Kind() == protoreflect.MessageKind {
-		return []cel.EnvOption{
-			cel.Types(dynamicpb.NewMessage(fieldDesc.Message())),
-		}
-	}
-	return nil
-}
-
 type lib struct {
-	useUTC bool
 }
 
-//nolint:funlen
 func (l lib) CompileOptions() []cel.EnvOption {
 	return []cel.EnvOption{
-		cel.DefaultUTCTimeZone(l.useUTC),
 		cel.CrossTypeNumericComparisons(true),
 		cel.EagerlyValidateDeclarations(true),
-		// TODO: reduce this to just the functionality we want to support
 		ext.Strings(ext.StringsValidateFormatCalls(true)),
-		cel.Variable("now", cel.TimestampType),
-		cel.Function("unique",
-			l.uniqueMemberOverload(cel.BoolType, l.uniqueScalar),
-			l.uniqueMemberOverload(cel.IntType, l.uniqueScalar),
-			l.uniqueMemberOverload(cel.UintType, l.uniqueScalar),
-			l.uniqueMemberOverload(cel.DoubleType, l.uniqueScalar),
-			l.uniqueMemberOverload(cel.StringType, l.uniqueScalar),
-			l.uniqueMemberOverload(cel.BytesType, l.uniqueBytes),
-		),
-		cel.Function("isNan",
-			cel.MemberOverload(
-				"double_is_nan_bool",
-				[]*cel.Type{cel.DoubleType},
-				cel.BoolType,
-				cel.UnaryBinding(func(value ref.Val) ref.Val {
-					num, ok := value.Value().(float64)
-					if !ok {
-						return types.UnsupportedRefValConversionErr(value)
-					}
-					return types.Bool(math.IsNaN(num))
-				}),
-			),
-		),
-		cel.Function("isInf",
-			cel.MemberOverload(
-				"double_is_inf_bool",
-				[]*cel.Type{cel.DoubleType},
-				cel.BoolType,
-				cel.UnaryBinding(func(value ref.Val) ref.Val {
-					num, ok := value.Value().(float64)
-					if !ok {
-						return types.UnsupportedRefValConversionErr(value)
-					}
-					return types.Bool(math.IsInf(num, 0))
-				}),
-			),
-			cel.MemberOverload(
-				"double_int_is_inf_bool",
-				[]*cel.Type{cel.DoubleType, cel.IntType},
-				cel.BoolType,
-				cel.BinaryBinding(func(lhs ref.Val, rhs ref.Val) ref.Val {
-					num, ok := lhs.Value().(float64)
-					if !ok {
-						return types.UnsupportedRefValConversionErr(lhs)
-					}
-					sign, ok := rhs.Value().(int64)
-					if !ok {
-						return types.UnsupportedRefValConversionErr(rhs)
-					}
-					return types.Bool(math.IsInf(num, int(sign)))
-				}),
-			),
-		),
 		cel.Function("isHostname",
 			cel.MemberOverload(
 				"string_is_hostname_bool",
@@ -154,9 +73,9 @@ func (l lib) CompileOptions() []cel.EnvOption {
 				}),
 			),
 		),
-		cel.Function("isIp",
+		cel.Function("isIpv4",
 			cel.MemberOverload(
-				"string_is_ip_bool",
+				"string_is_ipv6_bool",
 				[]*cel.Type{cel.StringType},
 				cel.BoolType,
 				cel.FunctionBinding(func(args ...ref.Val) ref.Val {
@@ -164,71 +83,23 @@ func (l lib) CompileOptions() []cel.EnvOption {
 					if !ok {
 						return types.Bool(false)
 					}
-					return types.Bool(l.validateIP(addr, 0))
+					return types.Bool(l.validateIP(addr, 4))
 				}),
 			),
-			cel.MemberOverload(
-				"string_int_is_ip_bool",
-				[]*cel.Type{cel.StringType, cel.IntType},
-				cel.BoolType,
-				cel.FunctionBinding(func(args ...ref.Val) ref.Val {
-					addr, aok := args[0].Value().(string)
-					vers, vok := args[1].Value().(int64)
-					if !aok || !vok {
-						return types.Bool(false)
-					}
-					return types.Bool(l.validateIP(addr, vers))
-				})),
 		),
-		cel.Function("isIpPrefix",
+		cel.Function("isIpv6",
 			cel.MemberOverload(
-				"string_is_ip_prefix_bool",
+				"string_is_ipv4_bool",
 				[]*cel.Type{cel.StringType},
 				cel.BoolType,
 				cel.FunctionBinding(func(args ...ref.Val) ref.Val {
-					prefix, ok := args[0].Value().(string)
+					addr, ok := args[0].Value().(string)
 					if !ok {
 						return types.Bool(false)
 					}
-					return types.Bool(l.validateIPPrefix(prefix, 0, false))
-				})),
-			cel.MemberOverload(
-				"string_int_is_ip_prefix_bool",
-				[]*cel.Type{cel.StringType, cel.IntType},
-				cel.BoolType,
-				cel.FunctionBinding(func(args ...ref.Val) ref.Val {
-					prefix, pok := args[0].Value().(string)
-					vers, vok := args[1].Value().(int64)
-					if !pok || !vok {
-						return types.Bool(false)
-					}
-					return types.Bool(l.validateIPPrefix(prefix, vers, false))
-				})),
-			cel.MemberOverload(
-				"string_bool_is_ip_prefix_bool",
-				[]*cel.Type{cel.StringType, cel.BoolType},
-				cel.BoolType,
-				cel.FunctionBinding(func(args ...ref.Val) ref.Val {
-					prefix, pok := args[0].Value().(string)
-					strict, sok := args[1].Value().(bool)
-					if !pok || !sok {
-						return types.Bool(false)
-					}
-					return types.Bool(l.validateIPPrefix(prefix, 0, strict))
-				})),
-			cel.MemberOverload(
-				"string_int_bool_is_ip_prefix_bool",
-				[]*cel.Type{cel.StringType, cel.IntType, cel.BoolType},
-				cel.BoolType,
-				cel.FunctionBinding(func(args ...ref.Val) ref.Val {
-					prefix, pok := args[0].Value().(string)
-					vers, vok := args[1].Value().(int64)
-					strict, sok := args[2].Value().(bool)
-					if !pok || !vok || !sok {
-						return types.Bool(false)
-					}
-					return types.Bool(l.validateIPPrefix(prefix, vers, strict))
-				})),
+					return types.Bool(l.validateIP(addr, 6))
+				}),
+			),
 		),
 		cel.Function("isUri",
 			cel.MemberOverload(
@@ -260,79 +131,18 @@ func (l lib) CompileOptions() []cel.EnvOption {
 				}),
 			),
 		),
-		cel.Function(overloads.Contains,
+		cel.Function("isUuid",
 			cel.MemberOverload(
-				overloads.ContainsString, []*cel.Type{cel.StringType, cel.StringType}, cel.BoolType,
-				cel.BinaryBinding(func(lhs ref.Val, rhs ref.Val) ref.Val {
-					substr, ok := rhs.Value().(string)
+				"string_is_uuid_bool",
+				[]*cel.Type{cel.StringType},
+				cel.BoolType,
+				cel.FunctionBinding(func(args ...ref.Val) ref.Val {
+					s, ok := args[0].Value().(string)
 					if !ok {
-						return types.UnsupportedRefValConversionErr(rhs)
-					}
-					return types.Bool(strings.Contains(lhs.Value().(string), substr))
-				}),
-			),
-			cel.MemberOverload("contains_bytes", []*cel.Type{cel.BytesType, cel.BytesType}, cel.BoolType,
-				cel.BinaryBinding(func(lhs ref.Val, rhs ref.Val) ref.Val {
-					substr, ok := rhs.Value().([]byte)
-					if !ok {
-						return types.UnsupportedRefValConversionErr(rhs)
-					}
-					return types.Bool(bytes.Contains(lhs.Value().([]byte), substr))
-				}),
-			),
-		),
-		cel.Function(overloads.EndsWith,
-			cel.MemberOverload(
-				overloads.EndsWithString, []*cel.Type{cel.StringType, cel.StringType}, cel.BoolType,
-				cel.BinaryBinding(func(lhs ref.Val, rhs ref.Val) ref.Val {
-					suffix, ok := rhs.Value().(string)
-					if !ok {
-						return types.UnsupportedRefValConversionErr(rhs)
-					}
-					return types.Bool(strings.HasSuffix(lhs.Value().(string), suffix))
-				}),
-			),
-			cel.MemberOverload("ends_with_bytes", []*cel.Type{cel.BytesType, cel.BytesType}, cel.BoolType,
-				cel.BinaryBinding(func(lhs ref.Val, rhs ref.Val) ref.Val {
-					suffix, ok := rhs.Value().([]byte)
-					if !ok {
-						return types.UnsupportedRefValConversionErr(rhs)
-					}
-					return types.Bool(bytes.HasSuffix(lhs.Value().([]byte), suffix))
-				}),
-			),
-		),
-		cel.Function(overloads.StartsWith,
-			cel.MemberOverload(
-				overloads.StartsWithString, []*cel.Type{cel.StringType, cel.StringType}, cel.BoolType,
-				cel.BinaryBinding(func(lhs ref.Val, rhs ref.Val) ref.Val {
-					prefix, ok := rhs.Value().(string)
-					if !ok {
-						return types.UnsupportedRefValConversionErr(rhs)
-					}
-					return types.Bool(strings.HasPrefix(lhs.Value().(string), prefix))
-				}),
-			),
-			cel.MemberOverload("starts_with_bytes", []*cel.Type{cel.BytesType, cel.BytesType}, cel.BoolType,
-				cel.BinaryBinding(func(lhs ref.Val, rhs ref.Val) ref.Val {
-					prefix, ok := rhs.Value().([]byte)
-					if !ok {
-						return types.UnsupportedRefValConversionErr(rhs)
-					}
-					return types.Bool(bytes.HasPrefix(lhs.Value().([]byte), prefix))
-				}),
-			),
-		),
-		cel.Function("isHostAndPort",
-			cel.MemberOverload("string_bool_is_host_and_port_bool",
-				[]*cel.Type{cel.StringType, cel.BoolType}, cel.BoolType,
-				cel.BinaryBinding(func(lhs ref.Val, rhs ref.Val) ref.Val {
-					val, vok := lhs.Value().(string)
-					portReq, pok := rhs.Value().(bool)
-					if !vok || !pok {
 						return types.Bool(false)
 					}
-					return types.Bool(l.isHostAndPort(val, portReq))
+					_, err := uuid.Parse(s)
+					return types.Bool(err == nil)
 				}),
 			),
 		),
@@ -345,51 +155,6 @@ func (l lib) ProgramOptions() []cel.ProgramOption {
 			cel.OptOptimize,
 		),
 	}
-}
-
-func (l lib) uniqueMemberOverload(itemType *cel.Type, overload func(lister traits.Lister) ref.Val) cel.FunctionOpt {
-	return cel.MemberOverload(
-		itemType.String()+"_unique_bool",
-		[]*cel.Type{cel.ListType(itemType)},
-		cel.BoolType,
-		cel.UnaryBinding(func(value ref.Val) ref.Val {
-			list, ok := value.(traits.Lister)
-			if !ok {
-				return types.UnsupportedRefValConversionErr(value)
-			}
-			return overload(list)
-		}),
-	)
-}
-
-func (l lib) uniqueScalar(list traits.Lister) ref.Val {
-	exist := make(map[ref.Val]struct{})
-	for i := int64(0); i < list.Size().Value().(int64); i++ {
-		if _, ok := exist[list.Get(types.Int(i))]; ok {
-			return types.Bool(false)
-		}
-		exist[list.Get(types.Int(i))] = struct{}{}
-	}
-	return types.Bool(true)
-}
-
-// uniqueBytes is an overload implementation of the unique function that
-// compares bytes type CEL values. This function is used instead of uniqueScalar
-// as the bytes ([]uint8) type is not hashable in Go; we cheat this by converting
-// the value to a string.
-func (l lib) uniqueBytes(list traits.Lister) ref.Val {
-	exist := make(map[any]struct{})
-	for i := int64(0); i < list.Size().Value().(int64); i++ {
-		val := list.Get(types.Int(i)).Value()
-		if b, ok := val.([]uint8); ok {
-			val = string(b)
-		}
-		if _, ok := exist[val]; ok {
-			return types.Bool(false)
-		}
-		exist[val] = struct{}{}
-	}
-	return types.Bool(true)
 }
 
 func (l lib) validateEmail(addr string) bool {
@@ -450,60 +215,4 @@ func (l lib) validateIP(addr string, ver int64) bool {
 	default:
 		return false
 	}
-}
-
-func (l lib) validateIPPrefix(p string, ver int64, strict bool) bool {
-	prefix, err := netip.ParsePrefix(p)
-	if err != nil {
-		return false
-	}
-	if strict && (prefix.Addr() != prefix.Masked().Addr()) {
-		return false
-	}
-	switch ver {
-	case 0:
-		return true
-	case 4:
-		return prefix.Addr().Is4()
-	case 6:
-		return prefix.Addr().Is6()
-	default:
-		return false
-	}
-}
-
-func (l lib) isHostAndPort(val string, portRequired bool) bool {
-	if len(val) == 0 {
-		return false
-	}
-
-	splitIdx := strings.LastIndexByte(val, ':')
-	if val[0] == '[' { // ipv6
-		end := strings.IndexByte(val, ']')
-		switch end + 1 {
-		case len(val): // no port
-			return !portRequired && l.validateIP(val[1:end], 6)
-		case splitIdx: // port
-			return l.validateIP(val[1:end], 6) &&
-				l.validatePort(val[splitIdx+1:])
-		default: // malformed
-			return false
-		}
-	}
-
-	if splitIdx < 0 {
-		return !portRequired &&
-			(l.validateHostname(val) ||
-				l.validateIP(val, 4))
-	}
-
-	host, port := val[:splitIdx], val[splitIdx+1:]
-	return (l.validateHostname(host) ||
-		l.validateIP(host, 4)) &&
-		l.validatePort(port)
-}
-
-func (l lib) validatePort(val string) bool {
-	n, err := strconv.ParseUint(val, 10, 32)
-	return err == nil && n <= 65535
 }
