@@ -21,6 +21,7 @@ import (
 	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry"
 	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/serde"
 	"github.com/google/cel-go/cel"
+	"github.com/google/cel-go/common/types"
 	"google.golang.org/protobuf/proto"
 	"reflect"
 	"strings"
@@ -29,11 +30,11 @@ import (
 
 func init() {
 	env, _ := DefaultEnv()
-	c := &Executor{
+	e := &Executor{
 		env:   env,
 		cache: map[string]cel.Program{},
 	}
-	serde.RegisterRuleExecutor(c)
+	serde.RegisterRuleExecutor(e)
 }
 
 type Executor struct {
@@ -89,31 +90,34 @@ func (c *Executor) executeRule(ctx serde.RuleContext, expr string, obj interface
 	if !ok {
 		msg = obj
 	}
-	/*
-		schema := ctx.Target.Schema
-		scriptType := ctx.Target.SchemaType
-
-	*/
-	decls := toDecls(args)
-
+	schema := ctx.Target.Schema
+	scriptType := ctx.Target.SchemaType
+	declTypeNames := toDeclTypeNames(args)
+	rule := ruleWithArgs{
+		Rule:          expr,
+		ScriptType:    scriptType,
+		DeclTypeNames: declTypeNames,
+		Schema:        schema,
+	}
+	ruleJSON, err := rule.MarshalJSON()
+	if err != nil {
+		return nil, err
+	}
 	c.cacheLock.RLock()
-	program, ok := c.cache["foo"]
+	program, ok := c.cache[string(ruleJSON)]
 	c.cacheLock.RUnlock()
 	if !ok {
+		decls := toDecls(args)
 		var err error
 		program, err = c.newProgram(expr, msg, decls)
 		if err != nil {
 			return nil, err
 		}
 		c.cacheLock.Lock()
-		c.cache["foo"] = program
+		c.cache[string(ruleJSON)] = program
 		c.cacheLock.Unlock()
 	}
-	out, _, err := program.Eval(args)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
+	return c.eval(program, args)
 }
 
 func toDecls(args map[string]interface{}) []cel.EnvOption {
@@ -122,6 +126,14 @@ func toDecls(args map[string]interface{}) []cel.EnvOption {
 		vars = append(vars, cel.Variable(name, findType(typ)))
 	}
 	return vars
+}
+
+func toDeclTypeNames(args map[string]interface{}) map[string]string {
+	declTypeNames := map[string]string{}
+	for name, typ := range args {
+		declTypeNames[name] = findType(typ).TypeName()
+	}
+	return declTypeNames
 }
 
 func findType(arg interface{}) *cel.Type {
@@ -170,9 +182,16 @@ func (c *Executor) newProgram(expr string, msg interface{}, decls []cel.EnvOptio
 		typ = typ.Elem()
 	}
 	typeName := typ.Name()
+	protoType, ok := msg.(proto.Message)
+	var declType interface{}
+	if ok {
+		declType = protoType
+	} else {
+		declType = cel.ObjectType(typeName)
+	}
 	envOptions := make([]cel.EnvOption, len(decls))
 	copy(envOptions, decls)
-	envOptions = append(envOptions, cel.Types(cel.ObjectType(typeName)))
+	envOptions = append(envOptions, cel.Types(declType))
 	env, err := c.env.Extend(envOptions...)
 	if err != nil {
 		return nil, err
@@ -188,22 +207,66 @@ func (c *Executor) newProgram(expr string, msg interface{}, decls []cel.EnvOptio
 	return prg, nil
 }
 
+func (c *Executor) eval(program cel.Program, args map[string]interface{}) (interface{}, error) {
+	out, _, err := program.Eval(args)
+	if err != nil {
+		return nil, err
+	}
+	if out.Type() == types.ErrType {
+		return nil, out.Value().(error)
+	}
+	if out.Type() == types.UnknownType {
+		return out.Value(), nil
+	}
+	var want interface{}
+	// Get type.Interface
+	// See https://stackoverflow.com/questions/18306151/in-go-which-value-s-kind-is-reflect-interface
+	wantType := reflect.ValueOf(&want).Type().Elem()
+	return out.ConvertToNative(wantType)
+}
+
 func (c *Executor) Close() {
 }
 
 type ruleWithArgs struct {
-	Rule       string                     `json:"rule"`
-	ScriptType string                     `json:"scriptType"`
-	Decls      map[string]serde.FieldType `json:"decls,omitempty"`
-	Schema     string                     `json:"schema,omitempty"`
+	Rule          string
+	ScriptType    string
+	DeclTypeNames map[string]string
+	Schema        string
 }
 
 // MarshalJSON implements the json.Marshaler interface
 func (r *ruleWithArgs) MarshalJSON() ([]byte, error) {
-	return json.Marshal(r)
+	return json.Marshal(&struct {
+		Rule          string            `json:"rule,omitempty"`
+		ScriptType    string            `json:"scriptType,omitempty"`
+		DeclTypeNames map[string]string `json:"declTypeNames,omitempty"`
+		Schema        string            `json:"schema,omitempty"`
+	}{
+		r.Rule,
+		r.ScriptType,
+		r.DeclTypeNames,
+		r.Schema,
+	})
+
 }
 
 // UnmarshalJSON implements the json.Unmarshaller interface
 func (r *ruleWithArgs) UnmarshalJSON(b []byte) error {
-	return json.Unmarshal(b, r)
+	var err error
+	var tmp struct {
+		Rule          string            `json:"rule,omitempty"`
+		ScriptType    string            `json:"scriptType,omitempty"`
+		DeclTypeNames map[string]string `json:"declTypeNames,omitempty"`
+		Schema        string            `json:"schema,omitempty"`
+	}
+
+	err = json.Unmarshal(b, &tmp)
+
+	r.Rule = tmp.Rule
+	r.ScriptType = tmp.ScriptType
+	r.DeclTypeNames = tmp.DeclTypeNames
+	r.Schema = tmp.Schema
+
+	return err
 }

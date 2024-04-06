@@ -500,18 +500,29 @@ func (s *Serde) ExecuteRules(subject string, topic string, ruleMode RuleMode,
 			return msg, nil
 		}
 		var err error
-		msg, err = ruleExecutor.Transform(ctx, msg)
+		result, err := ruleExecutor.Transform(ctx, msg)
 		if err != nil {
 			err = s.runAction(ctx, ruleMode, rule, rule.OnFailure, msg, err, "ERROR")
 			if err != nil {
 				return nil, err
 			}
-		} else if msg == nil {
+		} else if result == nil {
 			err = s.runAction(ctx, ruleMode, rule, rule.OnFailure, msg, nil, "ERROR")
 			if err != nil {
 				return nil, err
 			}
 		} else {
+			switch rule.Kind {
+			case "CONDITION":
+				condResult, ok2 := result.(bool)
+				if ok2 && !condResult {
+					return nil, RuleConditionErr{
+						Rule: ctx.Rule,
+					}
+				}
+			case "TRANSFORM":
+				msg = result
+			}
 			err = s.runAction(ctx, ruleMode, rule, rule.OnSuccess, msg, nil, "NONE")
 			if err != nil {
 				return nil, err
