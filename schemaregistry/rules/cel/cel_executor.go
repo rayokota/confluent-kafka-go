@@ -219,7 +219,7 @@ func (c *Executor) eval(program cel.Program, args map[string]interface{}) (inter
 		return out.Value(), nil
 	}
 	var want interface{}
-	// Get type.Interface
+	// Want type of type.Interface
 	// See https://stackoverflow.com/questions/18306151/in-go-which-value-s-kind-is-reflect-interface
 	wantType := reflect.ValueOf(&want).Type().Elem()
 	return out.ConvertToNative(wantType)
