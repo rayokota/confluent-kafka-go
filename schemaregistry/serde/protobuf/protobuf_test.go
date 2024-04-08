@@ -248,7 +248,7 @@ message Pizza {
 }
 `
 	encRule := schemaregistry.Rule{
-		Name: "test-encrypt",
+		Name: "test-cel",
 		Kind: "CONDITION",
 		Mode: "WRITE",
 		Type: "CEL",
@@ -280,9 +280,6 @@ message Pizza {
 	serde.MaybeFail("serialization", err)
 
 	deserConfig := NewDeserializerConfig()
-	deserConfig.RuleConfig = map[string]string{
-		"secret": "foo",
-	}
 	deser, err := NewDeserializer(client, serde.ValueSerde, deserConfig)
 	serde.MaybeFail("Deserializer configuration", err)
 	deser.Client = ser.Client
@@ -331,7 +328,7 @@ message Pizza {
 }
 `
 	encRule := schemaregistry.Rule{
-		Name: "test-encrypt",
+		Name: "test-cel",
 		Kind: "CONDITION",
 		Mode: "WRITE",
 		Type: "CEL",
@@ -360,7 +357,7 @@ message Pizza {
 	}
 
 	_, err = ser.Serialize("topic1", &obj)
-	serde.MaybeFail("deserialization", nil, serde.Expect(err, serde.RuleConditionErr{Rule: &encRule}))
+	serde.MaybeFail("serialization", nil, serde.Expect(err, serde.RuleConditionErr{Rule: &encRule}))
 }
 
 func TestProtobufSerdeEncryption(t *testing.T) {

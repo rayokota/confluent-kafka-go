@@ -22,6 +22,7 @@ import (
 	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/serde"
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types"
+	"github.com/google/cel-go/ext"
 	"google.golang.org/protobuf/proto"
 	"reflect"
 	"strings"
@@ -181,17 +182,16 @@ func (c *Executor) newProgram(expr string, msg interface{}, decls []cel.EnvOptio
 	if typ.Kind() == reflect.Pointer {
 		typ = typ.Elem()
 	}
-	typeName := typ.Name()
 	protoType, ok := msg.(proto.Message)
-	var declType interface{}
+	var declType cel.EnvOption
 	if ok {
-		declType = protoType
+		declType = cel.Types(protoType)
 	} else {
-		declType = cel.ObjectType(typeName)
+		declType = ext.NativeTypes(typ)
 	}
 	envOptions := make([]cel.EnvOption, len(decls))
 	copy(envOptions, decls)
-	envOptions = append(envOptions, cel.Types(declType))
+	envOptions = append(envOptions, declType)
 	env, err := c.env.Extend(envOptions...)
 	if err != nil {
 		return nil, err
