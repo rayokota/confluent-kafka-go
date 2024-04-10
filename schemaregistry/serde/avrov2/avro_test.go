@@ -662,7 +662,12 @@ func TestAvroSerdeJSONataFullyCompatible(t *testing.T) {
 		t.Errorf("Expected valid schema id, found %d", id)
 	}
 
-	avroSchema, err = StructToSchema(reflect.TypeOf(NewWidget{}))
+	newWidget := NewWidget{
+		Name:    "alice",
+		Height:  123,
+		Version: 1,
+	}
+	avroSchema, err = StructToSchema(reflect.TypeOf(newWidget))
 	serde.MaybeFail("StructToSchema", err)
 
 	info = schemaregistry.SchemaInfo{
@@ -712,7 +717,13 @@ func TestAvroSerdeJSONataFullyCompatible(t *testing.T) {
 	if id <= 0 {
 		t.Errorf("Expected valid schema id, found %d", id)
 	}
-	avroSchema, err = StructToSchema(reflect.TypeOf(NewerWidget{}))
+
+	newerWidget := NewerWidget{
+		Name:    "alice",
+		Length:  123,
+		Version: 1,
+	}
+	avroSchema, err = StructToSchema(reflect.TypeOf(newerWidget))
 	serde.MaybeFail("StructToSchema", err)
 
 	info = schemaregistry.SchemaInfo{
@@ -788,6 +799,19 @@ func TestAvroSerdeJSONataFullyCompatible(t *testing.T) {
 
 	newobj, err := deser1.Deserialize("topic1", bytes)
 	serde.MaybeFail("deserialization", err, serde.Expect(newobj, &widget))
+
+	deserConfig2 := NewDeserializerConfig()
+	deserConfig2.UseLatestWithMetadata = map[string]string{
+		"application.version": "v2",
+	}
+
+	deser2, err := NewDeserializer(client, serde.ValueSerde, deserConfig2)
+	serde.MaybeFail("Deserializer configuration", err)
+	deser2.Client = ser1.Client
+	deser2.MessageFactory = testMessageFactory
+
+	newobj, err = deser2.Deserialize("topic1", bytes)
+	serde.MaybeFail("deserialization", err, serde.Expect(newobj, &newWidget))
 }
 
 type DemoSchema struct {
@@ -829,7 +853,7 @@ type NewWidget struct {
 type NewerWidget struct {
 	Name string `json:"name"`
 
-	Height int `json:"length"`
+	Length int `json:"length"`
 
 	Version int `json:"version"`
 }
