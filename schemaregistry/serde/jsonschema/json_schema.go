@@ -213,6 +213,7 @@ func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, e
 
 // DeserializeInto implements deserialization of generic data from JSON to the given object
 func (s *Deserializer) DeserializeInto(topic string, payload []byte, msg interface{}) error {
+	// TODO
 	if len(payload) == 0 {
 		return nil
 	}

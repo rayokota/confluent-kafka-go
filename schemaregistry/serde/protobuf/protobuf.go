@@ -18,7 +18,9 @@ package protobuf
 
 import (
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
+	"google.golang.org/protobuf/encoding/protojson"
 	"io"
 	"log"
 	"strings"
@@ -51,6 +53,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/types/descriptorpb"
+	"google.golang.org/protobuf/types/dynamicpb"
 	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/apipb"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -533,11 +536,31 @@ func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, e
 	if err != nil {
 		return nil, err
 	}
+	name := messageDesc.GetFullyQualifiedName()
 	subject, err := s.SubjectNameStrategy(topic, s.SerdeType, info)
 	if err != nil {
 		return nil, err
 	}
-	msg, err := s.MessageFactory(subject, messageDesc.GetFullyQualifiedName())
+	readerMeta, err := s.GetReaderSchema(subject)
+	if err != nil {
+		return nil, err
+	}
+	var migrations []serde.Migration
+	if readerMeta != nil {
+		readerFd, err := s.toFileDesc(s.Client, readerMeta.SchemaInfo)
+		if err != nil {
+			return nil, err
+		}
+		name, err = toMessageName(readerFd, name)
+		if err != nil {
+			return nil, err
+		}
+		migrations, err = s.GetMigrations(subject, topic, &info, readerMeta, payload)
+		if err != nil {
+			return nil, err
+		}
+	}
+	msg, err := s.MessageFactory(subject, name)
 	if err != nil {
 		return nil, err
 	}
@@ -548,7 +571,40 @@ func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, e
 	default:
 		return nil, fmt.Errorf("deserialization target must be a protobuf message. Got '%v'", t)
 	}
-	err = proto.Unmarshal(payload[5+bytesRead:], protoMsg)
+	bytes := payload[5+bytesRead:]
+	if len(migrations) > 0 {
+		dynamicMsg := dynamicpb.NewMessage(messageDesc.UnwrapMessage())
+		err = proto.Unmarshal(bytes, dynamicMsg)
+		if err != nil {
+			return nil, err
+		}
+		jsonBytes, err := protojson.Marshal(dynamicMsg)
+		if err != nil {
+			return nil, err
+		}
+		var jsonMsg interface{}
+		err = json.Unmarshal(jsonBytes, &jsonMsg)
+		if err != nil {
+			return nil, err
+		}
+		jsonMsg, err = s.ExecuteMigrations(migrations, subject, topic, jsonMsg)
+		if err != nil {
+			return nil, err
+		}
+		jsonBytes, err = json.Marshal(jsonMsg)
+		if err != nil {
+			return nil, err
+		}
+		err = protojson.Unmarshal(jsonBytes, protoMsg)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		err = proto.Unmarshal(bytes, protoMsg)
+		if err != nil {
+			return nil, err
+		}
+	}
 	msg, err = s.ExecuteRules(subject, topic, schemaregistry.Read, nil, &info, protoMsg)
 	if err != nil {
 		return nil, err
@@ -564,6 +620,7 @@ func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, e
 
 // DeserializeInto implements deserialization of Protobuf data to the given object
 func (s *Deserializer) DeserializeInto(topic string, payload []byte, msg interface{}) error {
+	// TODO
 	if len(payload) == 0 {
 		return nil
 	}
@@ -641,6 +698,20 @@ func toMessageDesc(descriptor desc.Descriptor, msgIndexes []int) (*desc.MessageD
 	default:
 		return nil, fmt.Errorf("unexpected type")
 	}
+}
+
+// toMessageName returns the given message name if it exists, otherwise the first message name
+func toMessageName(fd *desc.FileDescriptor, name string) (string, error) {
+	var first string
+	for i, md := range fd.GetMessageTypes() {
+		if md.GetFullyQualifiedName() == name {
+			return name, nil
+		}
+		if i == 0 {
+			first = md.GetFullyQualifiedName()
+		}
+	}
+	return first, nil
 }
 
 func (s *Deserializer) protoMessageFactory(subject string, name string) (interface{}, error) {
