@@ -196,11 +196,38 @@ func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, e
 	if err != nil {
 		return nil, err
 	}
-	msg, err := s.MessageFactory(subject, "")
+	readerMeta, err := s.GetReaderSchema(subject)
 	if err != nil {
 		return nil, err
 	}
-	err = json.Unmarshal(payload[5:], msg)
+	var migrations []serde.Migration
+	if readerMeta != nil {
+		migrations, err = s.GetMigrations(subject, topic, &info, readerMeta, payload)
+		if err != nil {
+			return nil, err
+		}
+	}
+	var msg interface{}
+	bytes := payload[5:]
+	if len(migrations) > 0 {
+		err = json.Unmarshal(bytes, &msg)
+		if err != nil {
+			return nil, err
+		}
+		msg, err = s.ExecuteMigrations(migrations, subject, topic, msg)
+		if err != nil {
+			return nil, err
+		}
+		bytes, err = json.Marshal(msg)
+		if err != nil {
+			return nil, err
+		}
+	}
+	msg, err = s.MessageFactory(subject, "")
+	if err != nil {
+		return nil, err
+	}
+	err = json.Unmarshal(bytes, msg)
 	if err != nil {
 		return nil, err
 	}

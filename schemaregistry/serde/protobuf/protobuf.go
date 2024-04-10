@@ -571,10 +571,9 @@ func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, e
 	default:
 		return nil, fmt.Errorf("deserialization target must be a protobuf message. Got '%v'", t)
 	}
-	bytes := payload[5+bytesRead:]
 	if len(migrations) > 0 {
 		dynamicMsg := dynamicpb.NewMessage(messageDesc.UnwrapMessage())
-		err = proto.Unmarshal(bytes, dynamicMsg)
+		err = proto.Unmarshal(payload[5+bytesRead:], dynamicMsg)
 		if err != nil {
 			return nil, err
 		}
@@ -600,7 +599,7 @@ func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, e
 			return nil, err
 		}
 	} else {
-		err = proto.Unmarshal(bytes, protoMsg)
+		err = proto.Unmarshal(payload[5+bytesRead:], protoMsg)
 		if err != nil {
 			return nil, err
 		}

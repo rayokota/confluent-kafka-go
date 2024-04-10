@@ -23,6 +23,7 @@ import (
 	_ "github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/rules/encryption/gcpkms"
 	_ "github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/rules/encryption/hcvault"
 	_ "github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/rules/encryption/localkms"
+	_ "github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/rules/jsonata"
 
 	"encoding/json"
 	"github.com/invopop/jsonschema"
@@ -61,7 +62,58 @@ const (
   }
 }
 `
+	widgetSchema = `
+{
+  "type": "object",
+  "properties": {
+    "name": { 
+       "type": "string",
+       "confluent:tags": [ "PII" ]
+    },
+    "size": { "type": "number" },
+    "version": { "type": "integer" }
+  }
+}
+`
+	newWidgetSchema = `
+{
+  "type": "object",
+  "properties": {
+    "name": { 
+       "type": "string",
+       "confluent:tags": [ "PII" ]
+    },
+    "height": { "type": "number" },
+    "version": { "type": "integer" }
+  }
+}
+`
+	newerWidgetSchema = `
+{
+  "type": "object",
+  "properties": {
+    "name": { 
+       "type": "string",
+       "confluent:tags": [ "PII" ]
+    },
+    "length": { "type": "number" },
+    "version": { "type": "integer" }
+  }
+}
+`
 )
+
+func testMessageFactory1(subject string, name string) (interface{}, error) {
+	return &OldWidget{}, nil
+}
+
+func testMessageFactory2(subject string, name string) (interface{}, error) {
+	return &NewWidget{}, nil
+}
+
+func testMessageFactory3(subject string, name string) (interface{}, error) {
+	return &NewerWidget{}, nil
+}
 
 func TestJSONSchemaSerdeWithSimple(t *testing.T) {
 	serde.MaybeFail = serde.InitFailFunc(t)
@@ -440,6 +492,240 @@ func TestJSONSchemaSerdeEncryptionWithReferences(t *testing.T) {
 	serde.MaybeFail("deserialization", err, serde.Expect(&newobj, &obj))
 }
 
+func TestJSONSchemaSerdeJSONataFullyCompatible(t *testing.T) {
+	serde.MaybeFail = serde.InitFailFunc(t)
+	var err error
+
+	rule1To2 := "$merge([$sift($, function($v, $k) {$k != 'size'}), {'height': $.'size'}])"
+	rule2To1 := "$merge([$sift($, function($v, $k) {$k != 'height'}), {'size': $.'height'}])"
+	rule2To3 := "$merge([$sift($, function($v, $k) {$k != 'height'}), {'length': $.'height'}])"
+	rule3To2 := "$merge([$sift($, function($v, $k) {$k != 'length'}), {'height': $.'length'}])"
+
+	conf := schemaregistry.NewConfig("mock://")
+
+	client, err := schemaregistry.NewClient(conf)
+	serde.MaybeFail("Schema Registry configuration", err)
+
+	widget := OldWidget{
+		Name:    "alice",
+		Size:    123,
+		Version: 1,
+	}
+
+	info := schemaregistry.SchemaInfo{
+		Schema:     widgetSchema,
+		SchemaType: "JSON",
+		References: nil,
+		Metadata: &schemaregistry.Metadata{
+			Tags:       nil,
+			Properties: map[string]string{"application.version": "v1"},
+			Sensitive:  nil,
+		},
+		Ruleset: nil,
+	}
+
+	id, err := client.Register("topic1-value", info, false)
+	serde.MaybeFail("Schema registration", err)
+	if id <= 0 {
+		t.Errorf("Expected valid schema id, found %d", id)
+	}
+
+	newWidget := NewWidget{
+		Name:    "alice",
+		Height:  123,
+		Version: 1,
+	}
+
+	info = schemaregistry.SchemaInfo{
+		Schema:     newWidgetSchema,
+		SchemaType: "JSON",
+		References: nil,
+		Metadata: &schemaregistry.Metadata{
+			Tags:       nil,
+			Properties: map[string]string{"application.version": "v2"},
+			Sensitive:  nil,
+		},
+		Ruleset: &schemaregistry.RuleSet{
+			MigrationRules: []schemaregistry.Rule{
+				schemaregistry.Rule{
+					Name:      "myRule1",
+					Doc:       "",
+					Kind:      "TRANSFORM",
+					Mode:      "UPGRADE",
+					Type:      "JSONATA",
+					Tags:      nil,
+					Params:    nil,
+					Expr:      rule1To2,
+					OnSuccess: "",
+					OnFailure: "",
+					Disabled:  false,
+				},
+				schemaregistry.Rule{
+					Name:      "myRule2",
+					Doc:       "",
+					Kind:      "TRANSFORM",
+					Mode:      "DOWNGRADE",
+					Type:      "JSONATA",
+					Tags:      nil,
+					Params:    nil,
+					Expr:      rule2To1,
+					OnSuccess: "",
+					OnFailure: "",
+					Disabled:  false,
+				},
+			},
+			DomainRules: nil,
+		},
+	}
+
+	id, err = client.Register("topic1-value", info, false)
+	serde.MaybeFail("Schema registration", err)
+	if id <= 0 {
+		t.Errorf("Expected valid schema id, found %d", id)
+	}
+
+	newerWidget := NewerWidget{
+		Name:    "alice",
+		Length:  123,
+		Version: 1,
+	}
+
+	info = schemaregistry.SchemaInfo{
+		Schema:     newerWidgetSchema,
+		SchemaType: "JSON",
+		References: nil,
+		Metadata: &schemaregistry.Metadata{
+			Tags:       nil,
+			Properties: map[string]string{"application.version": "v3"},
+			Sensitive:  nil,
+		},
+		Ruleset: &schemaregistry.RuleSet{
+			MigrationRules: []schemaregistry.Rule{
+				schemaregistry.Rule{
+					Name:      "myRule1",
+					Doc:       "",
+					Kind:      "TRANSFORM",
+					Mode:      "UPGRADE",
+					Type:      "JSONATA",
+					Tags:      nil,
+					Params:    nil,
+					Expr:      rule2To3,
+					OnSuccess: "",
+					OnFailure: "",
+					Disabled:  false,
+				},
+				schemaregistry.Rule{
+					Name:      "myRule2",
+					Doc:       "",
+					Kind:      "TRANSFORM",
+					Mode:      "DOWNGRADE",
+					Type:      "JSONATA",
+					Tags:      nil,
+					Params:    nil,
+					Expr:      rule3To2,
+					OnSuccess: "",
+					OnFailure: "",
+					Disabled:  false,
+				},
+			},
+			DomainRules: nil,
+		},
+	}
+
+	id, err = client.Register("topic1-value", info, false)
+	serde.MaybeFail("Schema registration", err)
+	if id <= 0 {
+		t.Errorf("Expected valid schema id, found %d", id)
+	}
+
+	serConfig1 := NewSerializerConfig()
+	serConfig1.AutoRegisterSchemas = false
+	serConfig1.UseLatestVersion = false
+	serConfig1.UseLatestWithMetadata = map[string]string{
+		"application.version": "v1",
+	}
+
+	ser1, err := NewSerializer(client, serde.ValueSerde, serConfig1)
+	serde.MaybeFail("Serializer configuration", err)
+
+	bytes, err := ser1.Serialize("topic1", &widget)
+	serde.MaybeFail("serialization", err)
+
+	deserializeWithAllVersions(err, client, ser1, bytes, widget, newWidget, newerWidget)
+
+	serConfig2 := NewSerializerConfig()
+	serConfig2.AutoRegisterSchemas = false
+	serConfig2.UseLatestVersion = false
+	serConfig2.UseLatestWithMetadata = map[string]string{
+		"application.version": "v2",
+	}
+
+	ser2, err := NewSerializer(client, serde.ValueSerde, serConfig2)
+	serde.MaybeFail("Serializer configuration", err)
+
+	bytes, err = ser2.Serialize("topic1", &newWidget)
+	serde.MaybeFail("serialization", err)
+
+	deserializeWithAllVersions(err, client, ser2, bytes, widget, newWidget, newerWidget)
+
+	serConfig3 := NewSerializerConfig()
+	serConfig3.AutoRegisterSchemas = false
+	serConfig3.UseLatestVersion = false
+	serConfig3.UseLatestWithMetadata = map[string]string{
+		"application.version": "v3",
+	}
+
+	ser3, err := NewSerializer(client, serde.ValueSerde, serConfig3)
+	serde.MaybeFail("Serializer configuration", err)
+
+	bytes, err = ser3.Serialize("topic1", &newerWidget)
+	serde.MaybeFail("serialization", err)
+
+	deserializeWithAllVersions(err, client, ser3, bytes, widget, newWidget, newerWidget)
+}
+
+func deserializeWithAllVersions(err error, client schemaregistry.Client, ser *Serializer,
+	bytes []byte, widget OldWidget, newWidget NewWidget, newerWidget NewerWidget) {
+	deserConfig1 := NewDeserializerConfig()
+	deserConfig1.UseLatestWithMetadata = map[string]string{
+		"application.version": "v1",
+	}
+
+	deser1, err := NewDeserializer(client, serde.ValueSerde, deserConfig1)
+	serde.MaybeFail("Deserializer configuration", err)
+	deser1.Client = ser.Client
+	deser1.MessageFactory = testMessageFactory1
+
+	newobj, err := deser1.Deserialize("topic1", bytes)
+	serde.MaybeFail("deserialization", err, serde.Expect(newobj, &widget))
+
+	deserConfig2 := NewDeserializerConfig()
+	deserConfig2.UseLatestWithMetadata = map[string]string{
+		"application.version": "v2",
+	}
+
+	deser2, err := NewDeserializer(client, serde.ValueSerde, deserConfig2)
+	serde.MaybeFail("Deserializer configuration", err)
+	deser2.Client = ser.Client
+	deser2.MessageFactory = testMessageFactory2
+
+	newobj, err = deser2.Deserialize("topic1", bytes)
+	serde.MaybeFail("deserialization", err, serde.Expect(newobj, &newWidget))
+
+	deserConfig3 := NewDeserializerConfig()
+	deserConfig3.UseLatestWithMetadata = map[string]string{
+		"application.version": "v3",
+	}
+
+	deser3, err := NewDeserializer(client, serde.ValueSerde, deserConfig3)
+	serde.MaybeFail("Deserializer configuration", err)
+	deser3.Client = ser.Client
+	deser3.MessageFactory = testMessageFactory3
+
+	newobj, err = deser3.Deserialize("topic1", bytes)
+	serde.MaybeFail("deserialization", err, serde.Expect(newobj, &newerWidget))
+}
+
 type DifferentJSONDemoSchema struct {
 	IntField int32 `json:"IntField"`
 
@@ -473,4 +759,28 @@ type JSONNestedTestRecord struct {
 type JSONLinkedList struct {
 	Value int32
 	Next  *JSONLinkedList
+}
+
+type OldWidget struct {
+	Name string `json:"name"`
+
+	Size int `json:"size"`
+
+	Version int `json:"version"`
+}
+
+type NewWidget struct {
+	Name string `json:"name"`
+
+	Height int `json:"height"`
+
+	Version int `json:"version"`
+}
+
+type NewerWidget struct {
+	Name string `json:"name"`
+
+	Length int `json:"length"`
+
+	Version int `json:"version"`
 }
