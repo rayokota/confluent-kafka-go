@@ -92,7 +92,7 @@ func (s *Serializer) Serialize(topic string, msg interface{}) ([]byte, error) {
 	if msgType.Kind() != reflect.Pointer {
 		return nil, errors.New("input message must be a pointer")
 	}
-	avroType, err := structToSchema(msgType.Elem())
+	avroType, err := StructToSchema(msgType.Elem())
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +107,7 @@ func (s *Serializer) Serialize(topic string, msg interface{}) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	msg, err = s.ExecuteRules(subject, topic, serde.Write, nil, &info, msg)
+	msg, err = s.ExecuteRules(subject, topic, schemaregistry.Write, nil, &info, msg)
 	if err != nil {
 		return nil, err
 	}
@@ -163,23 +163,49 @@ func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, e
 	if err != nil {
 		return nil, err
 	}
+	subject, err := s.SubjectNameStrategy(topic, s.SerdeType, info)
+	if err != nil {
+		return nil, err
+	}
+	readerMeta, err := s.GetReaderSchema(subject)
+	if err != nil {
+		return nil, err
+	}
+	var migrations []serde.Migration
+	if readerMeta != nil {
+		migrations, err = s.GetMigrations(subject, topic, &info, readerMeta, payload)
+		if err != nil {
+			return nil, err
+		}
+	}
 	writer, name, err := s.toType(s.Client, info)
 	if err != nil {
 		return nil, err
 	}
-	subject, err := s.SubjectNameStrategy(topic, s.SerdeType, info)
-	if err != nil {
-		return nil, err
+	var bytes []byte
+	if len(migrations) > 0 {
+		var msg interface{}
+		err = avro.Unmarshal(writer, payload[5:], msg)
+		msg, err = s.ExecuteMigrations(migrations, subject, topic, msg)
+		if err != nil {
+			return nil, err
+		}
+		bytes, err = avro.Marshal(writer, msg)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		bytes = payload[5:]
 	}
 	msg, err := s.MessageFactory(subject, name)
 	if err != nil {
 		return nil, err
 	}
-	err = avro.Unmarshal(writer, payload[5:], msg)
+	err = avro.Unmarshal(writer, bytes, msg)
 	if err != nil {
 		return nil, err
 	}
-	msg, err = s.ExecuteRules(subject, topic, serde.Read, nil, &info, msg)
+	msg, err = s.ExecuteRules(subject, topic, schemaregistry.Read, nil, &info, msg)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +233,7 @@ func (s *Deserializer) DeserializeInto(topic string, payload []byte, msg interfa
 	if err != nil {
 		return err
 	}
-	msg, err = s.ExecuteRules(subject, topic, serde.Read, nil, &info, msg)
+	msg, err = s.ExecuteRules(subject, topic, schemaregistry.Read, nil, &info, msg)
 	return err
 }
 
@@ -273,13 +299,7 @@ func resolveAvroReferences(c schemaregistry.Client, schema schemaregistry.Schema
 		if err != nil {
 			return nil, err
 		}
-		info := schemaregistry.SchemaInfo{
-			Schema:     metadata.Schema,
-			SchemaType: metadata.SchemaType,
-			References: metadata.References,
-			Metadata:   metadata.Metadata,
-			Ruleset:    metadata.Ruleset,
-		}
+		info := metadata.SchemaInfo
 		_, err = resolveAvroReferences(c, info)
 		if err != nil {
 			return nil, err
@@ -293,7 +313,8 @@ func resolveAvroReferences(c schemaregistry.Client, schema schemaregistry.Schema
 	return sType, nil
 }
 
-func structToSchema(t reflect.Type, tags ...reflect.StructTag) (avro.Schema, error) {
+// StructToSchema generates an Avro schema from the given struct type
+func StructToSchema(t reflect.Type, tags ...reflect.StructTag) (avro.Schema, error) {
 	var schFields []*avro.Field
 	switch t.Kind() {
 	case reflect.Struct:
@@ -306,9 +327,9 @@ func structToSchema(t reflect.Type, tags ...reflect.StructTag) (avro.Schema, err
 		}
 		for i := 0; i < t.NumField(); i++ {
 			f := t.Field(i)
-			s, err := structToSchema(f.Type, f.Tag)
+			s, err := StructToSchema(f.Type, f.Tag)
 			if err != nil {
-				return nil, fmt.Errorf("structToSchema: %w", err)
+				return nil, fmt.Errorf("StructToSchema: %w", err)
 			}
 			fName := f.Tag.Get("avro")
 			if len(fName) == 0 {
@@ -334,9 +355,9 @@ func structToSchema(t reflect.Type, tags ...reflect.StructTag) (avro.Schema, err
 		}
 		return avro.NewRecordSchema(name, "", schFields)
 	case reflect.Map:
-		s, err := structToSchema(t.Elem(), tags...)
+		s, err := StructToSchema(t.Elem(), tags...)
 		if err != nil {
-			return nil, fmt.Errorf("structToSchema: %w", err)
+			return nil, fmt.Errorf("StructToSchema: %w", err)
 		}
 		return avro.NewMapSchema(s), nil
 	case reflect.Slice, reflect.Array:
@@ -349,16 +370,16 @@ func structToSchema(t reflect.Type, tags ...reflect.StructTag) (avro.Schema, err
 			}
 			return avro.NewPrimitiveSchema(avro.Bytes, nil), nil
 		}
-		s, err := structToSchema(t.Elem(), tags...)
+		s, err := StructToSchema(t.Elem(), tags...)
 		if err != nil {
-			return nil, fmt.Errorf("structToSchema: %w", err)
+			return nil, fmt.Errorf("StructToSchema: %w", err)
 		}
 		return avro.NewArraySchema(s), nil
 	case reflect.Pointer:
 		n := avro.NewPrimitiveSchema(avro.Null, nil)
-		s, err := structToSchema(t.Elem(), tags...)
+		s, err := StructToSchema(t.Elem(), tags...)
 		if err != nil {
-			return nil, fmt.Errorf("structToSchema: %w", err)
+			return nil, fmt.Errorf("StructToSchema: %w", err)
 		}
 		union, err := avro.NewUnionSchema([]avro.Schema{n, s})
 		if err != nil {

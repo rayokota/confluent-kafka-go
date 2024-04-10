@@ -231,7 +231,7 @@ func (f *FieldEncryptionExecutorTransform) isDekRotated() bool {
 }
 
 func (f *FieldEncryptionExecutorTransform) getOrCreateKek(ctx serde.RuleContext) (*deks.Kek, error) {
-	isRead := ctx.RuleMode == serde.Read
+	isRead := ctx.RuleMode == schemaregistry.Read
 	kekID := deks.KekID{
 		Name:    f.KekName,
 		Deleted: isRead,
@@ -302,7 +302,7 @@ func (f *FieldEncryptionExecutorTransform) storeKekToRegistry(key deks.KekID, km
 }
 
 func (f *FieldEncryptionExecutorTransform) getOrCreateDek(ctx serde.RuleContext, version *int) (*deks.Dek, error) {
-	isRead := ctx.RuleMode == serde.Read
+	isRead := ctx.RuleMode == schemaregistry.Read
 	ver := 1
 	if version != nil {
 		ver = *version
@@ -438,7 +438,7 @@ func (f *FieldEncryptionExecutorTransform) storeDekToRegistry(key deks.DekID, en
 }
 
 func (f *FieldEncryptionExecutorTransform) isExpired(ctx serde.RuleContext, dek *deks.Dek) bool {
-	return ctx.RuleMode != serde.Read &&
+	return ctx.RuleMode != schemaregistry.Read &&
 		f.DekExpiryDays > 0 &&
 		dek != nil &&
 		(time.Now().UnixNano()/1000000-dek.Ts)/MillisInDay >= int64(f.DekExpiryDays)
@@ -449,7 +449,7 @@ func (f *FieldEncryptionExecutorTransform) Transform(ctx serde.RuleContext, fiel
 		return nil, nil
 	}
 	switch ctx.RuleMode {
-	case serde.Write:
+	case schemaregistry.Write:
 		plaintext := toBytes(fieldCtx.Type, fieldValue)
 		if plaintext == nil {
 			return nil, fmt.Errorf("type '%v' not supported for encryption", fieldCtx.Type)
@@ -481,7 +481,7 @@ func (f *FieldEncryptionExecutorTransform) Transform(ctx serde.RuleContext, fiel
 			return base64.StdEncoding.EncodeToString(ciphertext), nil
 		}
 		return ciphertext, nil
-	case serde.Read:
+	case schemaregistry.Read:
 		ciphertext := toBytes(fieldCtx.Type, fieldValue)
 		if ciphertext == nil {
 			return fieldValue, nil

@@ -211,7 +211,7 @@ func (s *Serializer) Serialize(topic string, msg interface{}) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	msg, err = s.ExecuteRules(subject, topic, serde.Write, nil, info, protoMsg)
+	msg, err = s.ExecuteRules(subject, topic, schemaregistry.Write, nil, info, protoMsg)
 	if err != nil {
 		return nil, err
 	}
@@ -257,13 +257,7 @@ func (s *Serializer) getSchemaInfo(protoMsg proto.Message) (*schemaregistry.Sche
 	if err != nil {
 		return nil, err
 	}
-	info := &schemaregistry.SchemaInfo{
-		Schema:     metadata.Schema,
-		SchemaType: metadata.SchemaType,
-		References: metadata.References,
-		Metadata:   metadata.Metadata,
-		Ruleset:    metadata.Ruleset,
-	}
+	info := &metadata.SchemaInfo
 	if s.Conf.CacheSchemas {
 		s.descToSchemaCacheLock.Lock()
 		s.descToSchemaCache.Put(fileDesc.GetName(), info)
@@ -555,7 +549,7 @@ func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, e
 		return nil, fmt.Errorf("deserialization target must be a protobuf message. Got '%v'", t)
 	}
 	err = proto.Unmarshal(payload[5+bytesRead:], protoMsg)
-	msg, err = s.ExecuteRules(subject, topic, serde.Read, nil, &info, protoMsg)
+	msg, err = s.ExecuteRules(subject, topic, schemaregistry.Read, nil, &info, protoMsg)
 	if err != nil {
 		return nil, err
 	}
@@ -593,7 +587,7 @@ func (s *Deserializer) DeserializeInto(topic string, payload []byte, msg interfa
 		return fmt.Errorf("deserialization target must be a protobuf message. Got '%v'", t)
 	}
 	err = proto.Unmarshal(payload[5+bytesRead:], protoMsg)
-	msg, err = s.ExecuteRules(subject, topic, serde.Read, nil, &info, protoMsg)
+	msg, err = s.ExecuteRules(subject, topic, schemaregistry.Read, nil, &info, protoMsg)
 	if err != nil {
 		return err
 	}

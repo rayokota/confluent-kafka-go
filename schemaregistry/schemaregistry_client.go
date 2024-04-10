@@ -95,10 +95,70 @@ type Rule struct {
 	Disabled bool `json:"disabled,omitempty"`
 }
 
+// RuleMode represents the rule mode
+type RuleMode = int
+
+const (
+	// Upgrade denotes upgrade mode
+	Upgrade = 1
+	// Downgrade denotes downgrade mode
+	Downgrade = 2
+	// UpDown denotes upgrade/downgrade mode
+	UpDown = 3
+	// Write denotes write mode
+	Write = 4
+	// Read denotes read mode
+	Read = 5
+	// WriteRead denotes write/read mode
+	WriteRead = 6
+)
+
+var modes = map[string]RuleMode{
+	"UPGRADE":   Upgrade,
+	"DOWNGRADE": Downgrade,
+	"UPDOWN":    UpDown,
+	"WRITE":     Write,
+	"READ":      Read,
+	"WRITEREAD": WriteRead,
+}
+
+// ParseMode parses the given rule mode
+func ParseMode(mode string) (RuleMode, bool) {
+	c, ok := modes[strings.ToUpper(mode)]
+	return c, ok
+}
+
 // RuleSet represents a data contract rule set
 type RuleSet struct {
 	MigrationRules []Rule `json:"migrationRules,omitempty"`
 	DomainRules    []Rule `json:"domainRules,omitempty"`
+}
+
+func (r *RuleSet) HasRules(mode RuleMode) bool {
+	var rules []Rule
+	switch mode {
+	case Upgrade, Downgrade:
+		if mode == UpDown {
+			return true
+		}
+		rules = r.MigrationRules
+	case UpDown:
+		rules = r.MigrationRules
+	case Write, Read:
+		if mode == WriteRead {
+			return true
+		}
+		rules = r.DomainRules
+	case WriteRead:
+		rules = r.DomainRules
+	}
+	for _, rule := range rules {
+		ruleMode, ok := ParseMode(rule.Mode)
+		if ok && ruleMode == mode {
+			return true
+		}
+	}
+	return false
 }
 
 // Metadata represents user-defined metadata
@@ -474,13 +534,7 @@ func (c *client) GetBySubjectAndID(subject string, id int) (schema SchemaInfo, e
 			err = c.restService.HandleRequest(internal.NewRequest("GET", internal.Schemas, nil, id), &metadata)
 		}
 		if err == nil {
-			newInfo = &SchemaInfo{
-				Schema:     metadata.Schema,
-				SchemaType: metadata.SchemaType,
-				References: metadata.References,
-				Metadata:   metadata.Metadata,
-				Ruleset:    metadata.Ruleset,
-			}
+			newInfo = &metadata.SchemaInfo
 			c.idToSchemaCache.Put(cacheKey, newInfo)
 		}
 	} else {

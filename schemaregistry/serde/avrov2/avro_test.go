@@ -24,6 +24,8 @@ import (
 	_ "github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/rules/encryption/gcpkms"
 	_ "github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/rules/encryption/hcvault"
 	_ "github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/rules/encryption/localkms"
+	_ "github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/rules/jsonata"
+	"reflect"
 	"testing"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry"
@@ -614,6 +616,181 @@ func TestAvroSerdeEncryptionWithPointerReferences(t *testing.T) {
 	serde.MaybeFail("deserialization", err, serde.Expect(newobj, &obj))
 }
 
+func TestAvroSerdeJSONataFullyCompatible(t *testing.T) {
+	serde.MaybeFail = serde.InitFailFunc(t)
+	var err error
+
+	rule1To2 := "$merge([$sift($, function($v, $k) {$k != 'size'}), {'height': $.'size'}])"
+	rule2To1 := "$merge([$sift($, function($v, $k) {$k != 'height'}), {'size': $.'height'}])"
+	rule2To3 := "$merge([$sift($, function($v, $k) {$k != 'height'}), {'length': $.'height'}])"
+	rule3To2 := "$merge([$sift($, function($v, $k) {$k != 'length'}), {'height': $.'length'}])"
+
+	conf := schemaregistry.NewConfig("mock://")
+
+	client, err := schemaregistry.NewClient(conf)
+	serde.MaybeFail("Schema Registry configuration", err)
+
+	widget := OldWidget{
+		Name:    "alice",
+		Size:    123,
+		Version: 1,
+	}
+	avroSchema, err := StructToSchema(reflect.TypeOf(widget))
+	serde.MaybeFail("StructToSchema", err)
+
+	info := schemaregistry.SchemaInfo{
+		Schema:     avroSchema.String(),
+		SchemaType: "AVRO",
+		References: nil,
+		Metadata: &schemaregistry.Metadata{
+			Tags:       nil,
+			Properties: map[string]string{"application.version": "v1"},
+			Sensitive:  nil,
+		},
+		Ruleset: nil,
+	}
+
+	id, err := client.Register("demo-value", info, false)
+	serde.MaybeFail("Schema registration", err)
+	if id <= 0 {
+		t.Errorf("Expected valid schema id, found %d", id)
+	}
+
+	avroSchema, err = StructToSchema(reflect.TypeOf(NewWidget{}))
+	serde.MaybeFail("StructToSchema", err)
+
+	info = schemaregistry.SchemaInfo{
+		Schema:     avroSchema.String(),
+		SchemaType: "AVRO",
+		References: nil,
+		Metadata: &schemaregistry.Metadata{
+			Tags:       nil,
+			Properties: map[string]string{"application.version": "v2"},
+			Sensitive:  nil,
+		},
+		Ruleset: &schemaregistry.RuleSet{
+			MigrationRules: []schemaregistry.Rule{
+				schemaregistry.Rule{
+					Name:      "myRule1",
+					Doc:       "",
+					Kind:      "TRANSFORM",
+					Mode:      "UPGRADE",
+					Type:      "JSONATA",
+					Tags:      nil,
+					Params:    nil,
+					Expr:      rule1To2,
+					OnSuccess: "",
+					OnFailure: "",
+					Disabled:  false,
+				},
+				schemaregistry.Rule{
+					Name:      "myRule2",
+					Doc:       "",
+					Kind:      "TRANSFORM",
+					Mode:      "DOWNGRADE",
+					Type:      "JSONATA",
+					Tags:      nil,
+					Params:    nil,
+					Expr:      rule2To1,
+					OnSuccess: "",
+					OnFailure: "",
+					Disabled:  false,
+				},
+			},
+			DomainRules: nil,
+		},
+	}
+
+	id, err = client.Register("demo-value", info, false)
+	serde.MaybeFail("Schema registration", err)
+	if id <= 0 {
+		t.Errorf("Expected valid schema id, found %d", id)
+	}
+	avroSchema, err = StructToSchema(reflect.TypeOf(NewerWidget{}))
+	serde.MaybeFail("StructToSchema", err)
+
+	info = schemaregistry.SchemaInfo{
+		Schema:     avroSchema.String(),
+		SchemaType: "AVRO",
+		References: nil,
+		Metadata: &schemaregistry.Metadata{
+			Tags:       nil,
+			Properties: map[string]string{"application.version": "v3"},
+			Sensitive:  nil,
+		},
+		Ruleset: &schemaregistry.RuleSet{
+			MigrationRules: []schemaregistry.Rule{
+				schemaregistry.Rule{
+					Name:      "myRule1",
+					Doc:       "",
+					Kind:      "TRANSFORM",
+					Mode:      "UPGRADE",
+					Type:      "JSONATA",
+					Tags:      nil,
+					Params:    nil,
+					Expr:      rule2To3,
+					OnSuccess: "",
+					OnFailure: "",
+					Disabled:  false,
+				},
+				schemaregistry.Rule{
+					Name:      "myRule2",
+					Doc:       "",
+					Kind:      "TRANSFORM",
+					Mode:      "DOWNGRADE",
+					Type:      "JSONATA",
+					Tags:      nil,
+					Params:    nil,
+					Expr:      rule3To2,
+					OnSuccess: "",
+					OnFailure: "",
+					Disabled:  false,
+				},
+			},
+			DomainRules: nil,
+		},
+	}
+
+	id, err = client.Register("demo-value", info, false)
+	serde.MaybeFail("Schema registration", err)
+	if id <= 0 {
+		t.Errorf("Expected valid schema id, found %d", id)
+	}
+
+	serConfig := NewSerializerConfig()
+	serConfig.AutoRegisterSchemas = false
+	serConfig.UseLatestVersion = true
+	serConfig.RuleConfig = map[string]string{
+		"secret": "foo",
+	}
+
+	/*
+		ser, err := NewSerializer(client, serde.ValueSerde, serConfig)
+		serde.MaybeFail("Serializer configuration", err)
+		ser.RegisterTypeFromMessageFactory("DemoSchema", testMessageFactory)
+
+		bytes, err := ser.Serialize("topic1", &obj)
+		serde.MaybeFail("serialization", err)
+
+		// Reset encrypted field
+		obj.OtherField.StringField = "hi"
+
+		deserConfig := NewDeserializerConfig()
+		deserConfig.RuleConfig = map[string]string{
+			"secret": "foo",
+		}
+		deser, err := NewDeserializer(client, serde.ValueSerde, deserConfig)
+		serde.MaybeFail("Deserializer configuration", err)
+		deser.Client = ser.Client
+		deser.MessageFactory = testMessageFactory
+		deser.RegisterTypeFromMessageFactory("DemoSchema", testMessageFactory)
+
+		newobj, err := deser.Deserialize("topic1", bytes)
+		serde.MaybeFail("deserialization", err, serde.Expect(newobj, &obj))
+
+	*/
+}
+
 type DemoSchema struct {
 	IntField int32 `json:"IntField"`
 
@@ -632,4 +809,28 @@ type NestedTestRecord struct {
 
 type NestedTestPointerRecord struct {
 	OtherField *DemoSchema
+}
+
+type OldWidget struct {
+	Name string `json:"name"`
+
+	Size int `json:"size"`
+
+	Version int `json:"version"`
+}
+
+type NewWidget struct {
+	Name string `json:"name"`
+
+	Height int `json:"height"`
+
+	Version int `json:"version"`
+}
+
+type NewerWidget struct {
+	Name string `json:"name"`
+
+	Height int `json:"length"`
+
+	Version int `json:"version"`
 }

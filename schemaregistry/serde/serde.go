@@ -44,33 +44,6 @@ const (
 	DisableValidation = false
 )
 
-// RuleMode represents the rule mode
-type RuleMode = int
-
-const (
-	// Upgrade denotes upgrade mode
-	Upgrade = 1
-	// Downgrade denotes downgrade mode
-	Downgrade = 2
-	// UpDown denotes upgrade/downgrade mode
-	UpDown = 3
-	// Write denotes write mode
-	Write = 4
-	// Read denotes read mode
-	Read = 5
-	// WriteRead denotes write/read mode
-	WriteRead = 6
-)
-
-var modes = map[string]RuleMode{
-	"UPGRADE":   Upgrade,
-	"DOWNGRADE": Downgrade,
-	"UPDOWN":    UpDown,
-	"WRITE":     Write,
-	"READ":      Read,
-	"WRITEREAD": WriteRead,
-}
-
 // MagicByte is prepended to the serialized payload
 const MagicByte byte = 0x0
 
@@ -128,7 +101,7 @@ type RuleContext struct {
 	Subject       string
 	Topic         string
 	IsKey         bool
-	RuleMode      RuleMode
+	RuleMode      schemaregistry.RuleMode
 	Rule          *schemaregistry.Rule
 	Index         int
 	Rules         []schemaregistry.Rule
@@ -239,7 +212,7 @@ func (a *AbstractFieldRuleExecutor) SetFieldTransformer(transformer FieldTransfo
 func (a *AbstractFieldRuleExecutor) Transform(ctx RuleContext, msg interface{}) (interface{}, error) {
 	// TODO preserve source?
 	switch ctx.RuleMode {
-	case Write, Upgrade:
+	case schemaregistry.Write, schemaregistry.Upgrade:
 		for i := 0; i < ctx.Index; i++ {
 			otherRule := ctx.Rules[i]
 			if areTransformsWithSameTag(*ctx.Rule, otherRule) {
@@ -247,7 +220,7 @@ func (a *AbstractFieldRuleExecutor) Transform(ctx RuleContext, msg interface{}) 
 				return msg, nil
 			}
 		}
-	case Read, Downgrade:
+	case schemaregistry.Read, schemaregistry.Downgrade:
 		for i := ctx.Index + 1; i < len(ctx.Rules); i++ {
 			otherRule := ctx.Rules[i]
 			if areTransformsWithSameTag(*ctx.Rule, otherRule) {
@@ -382,6 +355,7 @@ func TopicNameStrategy(topic string, serdeType Type, schema schemaregistry.Schem
 func (s *BaseSerializer) GetID(topic string, msg interface{}, info *schemaregistry.SchemaInfo) (int, error) {
 	autoRegister := s.Conf.AutoRegisterSchemas
 	useSchemaID := s.Conf.UseSchemaID
+	useLatestWithMetadata := s.Conf.UseLatestWithMetadata
 	useLatest := s.Conf.UseLatestVersion
 	normalizeSchema := s.Conf.NormalizeSchemas
 
@@ -407,18 +381,22 @@ func (s *BaseSerializer) GetID(topic string, msg interface{}, info *schemaregist
 		if id != useSchemaID {
 			return -1, fmt.Errorf("failed to match schema ID (%d != %d)", id, useSchemaID)
 		}
+	} else if len(useLatestWithMetadata) != 0 {
+		metadata, err := s.Client.GetLatestWithMetadata(subject, useLatestWithMetadata, true)
+		if err != nil {
+			return -1, err
+		}
+		*info = metadata.SchemaInfo
+		id, err = s.Client.GetID(subject, *info, false)
+		if err != nil {
+			return -1, err
+		}
 	} else if useLatest {
 		metadata, err := s.Client.GetLatestSchemaMetadata(subject)
 		if err != nil {
 			return -1, err
 		}
-		*info = schemaregistry.SchemaInfo{
-			Schema:     metadata.Schema,
-			SchemaType: metadata.SchemaType,
-			References: metadata.References,
-			Metadata:   metadata.Metadata,
-			Ruleset:    metadata.Ruleset,
-		}
+		*info = metadata.SchemaInfo
 		id, err = s.Client.GetID(subject, *info, false)
 		if err != nil {
 			return -1, err
@@ -432,18 +410,118 @@ func (s *BaseSerializer) GetID(topic string, msg interface{}, info *schemaregist
 	return id, nil
 }
 
-func (s *Serde) ExecuteRules(subject string, topic string, ruleMode RuleMode,
+func (s *Serde) GetMigrations(subject string, topic string, sourceInfo *schemaregistry.SchemaInfo,
+	target *schemaregistry.SchemaMetadata, msg interface{}) ([]Migration, error) {
+	version, err := s.Client.GetVersion(subject, *sourceInfo, false)
+	if err != nil {
+		return nil, err
+	}
+	source := &schemaregistry.SchemaMetadata{
+		SchemaInfo: *sourceInfo,
+		Version:    version,
+	}
+	var migrationMode schemaregistry.RuleMode
+	var migrations []Migration
+	var first *schemaregistry.SchemaMetadata
+	var last *schemaregistry.SchemaMetadata
+	if source.Version < target.Version {
+		migrationMode = schemaregistry.Upgrade
+		first = source
+		last = target
+	} else if source.Version > target.Version {
+		migrationMode = schemaregistry.Downgrade
+		first = target
+		last = source
+	} else {
+		return migrations, nil
+	}
+	var previous *schemaregistry.SchemaMetadata
+	versions, err := s.getSchemasBetween(subject, first, last)
+	if err != nil {
+		return nil, err
+	}
+	for i, version := range versions {
+		if i == 0 {
+			previous = version
+			continue
+		}
+		if version.Ruleset != nil && version.Ruleset.HasRules(migrationMode) {
+			var m Migration
+			if migrationMode == schemaregistry.Upgrade {
+				m = Migration{
+					RuleMode: migrationMode,
+					Source:   previous,
+					Target:   version,
+				}
+			} else {
+				m = Migration{
+					RuleMode: migrationMode,
+					Source:   version,
+					Target:   previous,
+				}
+			}
+			migrations = append(migrations, m)
+		}
+		previous = version
+	}
+	if migrationMode == schemaregistry.Downgrade {
+		// Reverse the order of migrations for symmetry
+		for i, j := 0, len(migrations)-1; i < j; i, j = i+1, j-1 {
+			migrations[i], migrations[j] = migrations[j], migrations[i]
+		}
+	}
+	return migrations, nil
+}
+
+func (s *Serde) getSchemasBetween(subject string, first *schemaregistry.SchemaMetadata,
+	last *schemaregistry.SchemaMetadata) ([]*schemaregistry.SchemaMetadata, error) {
+	if last.Version-first.Version <= 1 {
+		return []*schemaregistry.SchemaMetadata{first, last}, nil
+	}
+	version1 := first.Version
+	version2 := last.Version
+	result := []*schemaregistry.SchemaMetadata{first}
+	for i := version1 + 1; i < version2; i++ {
+		meta, err := s.Client.GetSchemaMetadata(subject, i)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, &meta)
+	}
+	result = append(result, last)
+	return result, nil
+}
+
+type Migration struct {
+	RuleMode schemaregistry.RuleMode
+	Source   *schemaregistry.SchemaMetadata
+	Target   *schemaregistry.SchemaMetadata
+}
+
+func (s *Serde) ExecuteMigrations(migrations []Migration, subject string, topic string, msg interface{}) (interface{}, error) {
+	var err error
+	for _, migration := range migrations {
+		msg, err = s.ExecuteRules(subject, topic, migration.RuleMode,
+			&migration.Source.SchemaInfo, &migration.Target.SchemaInfo, msg)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return msg, nil
+}
+
+func (s *Serde) ExecuteRules(subject string, topic string, ruleMode schemaregistry.RuleMode,
 	source *schemaregistry.SchemaInfo, target *schemaregistry.SchemaInfo, msg interface{}) (interface{}, error) {
 	if msg == nil || target == nil {
 		return msg, nil
 	}
 	var rules []schemaregistry.Rule
 	switch ruleMode {
-	case Upgrade:
+	case schemaregistry.Upgrade:
 		if target.Ruleset != nil {
 			rules = target.Ruleset.MigrationRules
 		}
-	case Downgrade:
+	case schemaregistry.Downgrade:
 		if source.Ruleset != nil {
 			// Execute downgrade rules in reverse order for symmetry
 			rules = reverseRules(source.Ruleset.MigrationRules)
@@ -451,7 +529,7 @@ func (s *Serde) ExecuteRules(subject string, topic string, ruleMode RuleMode,
 	default:
 		if target.Ruleset != nil {
 			rules = target.Ruleset.DomainRules
-			if ruleMode == Read {
+			if ruleMode == schemaregistry.Read {
 				// Execute read rules in reverse order for symmetry
 				rules = reverseRules(rules)
 			}
@@ -461,17 +539,17 @@ func (s *Serde) ExecuteRules(subject string, topic string, ruleMode RuleMode,
 		if rule.Disabled {
 			continue
 		}
-		mode, ok := parseMode(rule.Mode)
+		mode, ok := schemaregistry.ParseMode(rule.Mode)
 		if !ok {
 			continue
 		}
 		switch mode {
-		case WriteRead:
-			if ruleMode != Write && ruleMode != Read {
+		case schemaregistry.WriteRead:
+			if ruleMode != schemaregistry.Write && ruleMode != schemaregistry.Read {
 				continue
 			}
-		case UpDown:
-			if ruleMode != Upgrade && ruleMode != Downgrade {
+		case schemaregistry.UpDown:
+			if ruleMode != schemaregistry.Upgrade && ruleMode != schemaregistry.Downgrade {
 				continue
 			}
 		default:
@@ -532,11 +610,6 @@ func (s *Serde) ExecuteRules(subject string, topic string, ruleMode RuleMode,
 	return msg, nil
 }
 
-func parseMode(mode string) (RuleMode, bool) {
-	c, ok := modes[strings.ToUpper(mode)]
-	return c, ok
-}
-
 func reverseRules(rules []schemaregistry.Rule) []schemaregistry.Rule {
 	newRules := make([]schemaregistry.Rule, len(rules))
 	copy(newRules, rules)
@@ -547,7 +620,7 @@ func reverseRules(rules []schemaregistry.Rule) []schemaregistry.Rule {
 	return newRules
 }
 
-func (s *Serde) runAction(ctx RuleContext, ruleMode RuleMode, rule schemaregistry.Rule,
+func (s *Serde) runAction(ctx RuleContext, ruleMode schemaregistry.RuleMode, rule schemaregistry.Rule,
 	action string, msg interface{}, err error, defaultAction string) error {
 	actionName := s.getRuleActionName(rule, ruleMode, action)
 	if actionName == nil {
@@ -566,20 +639,20 @@ func (s *Serde) runAction(ctx RuleContext, ruleMode RuleMode, rule schemaregistr
 	return nil
 }
 
-func (s *Serde) getRuleActionName(rule schemaregistry.Rule, ruleMode RuleMode, actionName string) *string {
+func (s *Serde) getRuleActionName(rule schemaregistry.Rule, ruleMode schemaregistry.RuleMode, actionName string) *string {
 	if actionName == "" {
 		return nil
 	}
-	mode, ok := parseMode(rule.Mode)
+	mode, ok := schemaregistry.ParseMode(rule.Mode)
 	if !ok {
 		return nil
 	}
-	if (mode == WriteRead || mode == UpDown) && strings.Contains(actionName, ",") {
+	if (mode == schemaregistry.WriteRead || mode == schemaregistry.UpDown) && strings.Contains(actionName, ",") {
 		parts := strings.Split(actionName, ",")
 		switch ruleMode {
-		case Write, Upgrade:
+		case schemaregistry.Write, schemaregistry.Upgrade:
 			return &parts[0]
-		case Read, Downgrade:
+		case schemaregistry.Read, schemaregistry.Downgrade:
 			return &parts[1]
 		default:
 			return nil
@@ -632,6 +705,27 @@ func (s *BaseDeserializer) GetSchema(topic string, payload []byte) (schemaregist
 	return s.Client.GetBySubjectAndID(subject, int(id))
 }
 
+// GetReaderSchema returns a schema for reading
+func (s *BaseDeserializer) GetReaderSchema(subject string) (*schemaregistry.SchemaMetadata, error) {
+	useLatestWithMetadata := s.Conf.UseLatestWithMetadata
+	useLatest := s.Conf.UseLatestVersion
+	if len(useLatestWithMetadata) != 0 {
+		meta, err := s.Client.GetLatestWithMetadata(subject, useLatestWithMetadata, true)
+		if err != nil {
+			return nil, err
+		}
+		return &meta, nil
+	}
+	if useLatest {
+		meta, err := s.Client.GetLatestSchemaMetadata(subject)
+		if err != nil {
+			return nil, err
+		}
+		return &meta, nil
+	}
+	return nil, nil
+}
+
 // ResolveReferences resolves schema references
 func ResolveReferences(c schemaregistry.Client, schema schemaregistry.SchemaInfo, deps map[string]string) error {
 	for _, ref := range schema.References {
@@ -639,13 +733,7 @@ func ResolveReferences(c schemaregistry.Client, schema schemaregistry.SchemaInfo
 		if err != nil {
 			return err
 		}
-		info := schemaregistry.SchemaInfo{
-			Schema:     metadata.Schema,
-			SchemaType: metadata.SchemaType,
-			References: metadata.References,
-			Metadata:   metadata.Metadata,
-			Ruleset:    metadata.Ruleset,
-		}
+		info := metadata.SchemaInfo
 		deps[ref.Name] = metadata.Schema
 		err = ResolveReferences(c, info, deps)
 		if err != nil {

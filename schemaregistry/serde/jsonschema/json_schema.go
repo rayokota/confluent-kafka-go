@@ -107,7 +107,7 @@ func (s *Serializer) Serialize(topic string, msg interface{}) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	msg, err = s.ExecuteRules(subject, topic, serde.Write, nil, &info, msg)
+	msg, err = s.ExecuteRules(subject, topic, schemaregistry.Write, nil, &info, msg)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +204,7 @@ func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, e
 	if err != nil {
 		return nil, err
 	}
-	msg, err = s.ExecuteRules(subject, topic, serde.Read, nil, &info, msg)
+	msg, err = s.ExecuteRules(subject, topic, schemaregistry.Read, nil, &info, msg)
 	if err != nil {
 		return nil, err
 	}
@@ -244,7 +244,7 @@ func (s *Deserializer) DeserializeInto(topic string, payload []byte, msg interfa
 	if err != nil {
 		return err
 	}
-	msg, err = s.ExecuteRules(subject, topic, serde.Read, nil, &info, msg)
+	msg, err = s.ExecuteRules(subject, topic, schemaregistry.Read, nil, &info, msg)
 	if err != nil {
 		return err
 	}
