@@ -101,6 +101,12 @@ func testMessageFactory(subject string, name string) (interface{}, error) {
 		return &NestedTestRecord{}, nil
 	case "NestedTestPointerRecord":
 		return &NestedTestPointerRecord{}, nil
+	case "OldWidget":
+		return &OldWidget{}, nil
+	case "NewWidget":
+		return &NewWidget{}, nil
+	case "NewerWidget":
+		return &NewerWidget{}, nil
 	}
 
 	return nil, errors.New("schema not found")
@@ -650,7 +656,7 @@ func TestAvroSerdeJSONataFullyCompatible(t *testing.T) {
 		Ruleset: nil,
 	}
 
-	id, err := client.Register("demo-value", info, false)
+	id, err := client.Register("topic1-value", info, false)
 	serde.MaybeFail("Schema registration", err)
 	if id <= 0 {
 		t.Errorf("Expected valid schema id, found %d", id)
@@ -701,7 +707,7 @@ func TestAvroSerdeJSONataFullyCompatible(t *testing.T) {
 		},
 	}
 
-	id, err = client.Register("demo-value", info, false)
+	id, err = client.Register("topic1-value", info, false)
 	serde.MaybeFail("Schema registration", err)
 	if id <= 0 {
 		t.Errorf("Expected valid schema id, found %d", id)
@@ -751,44 +757,37 @@ func TestAvroSerdeJSONataFullyCompatible(t *testing.T) {
 		},
 	}
 
-	id, err = client.Register("demo-value", info, false)
+	id, err = client.Register("topic1-value", info, false)
 	serde.MaybeFail("Schema registration", err)
 	if id <= 0 {
 		t.Errorf("Expected valid schema id, found %d", id)
 	}
 
-	serConfig := NewSerializerConfig()
-	serConfig.AutoRegisterSchemas = false
-	serConfig.UseLatestVersion = true
-	serConfig.RuleConfig = map[string]string{
-		"secret": "foo",
+	serConfig1 := NewSerializerConfig()
+	serConfig1.AutoRegisterSchemas = false
+	serConfig1.UseLatestVersion = false
+	serConfig1.UseLatestWithMetadata = map[string]string{
+		"application.version": "v1",
 	}
 
-	/*
-		ser, err := NewSerializer(client, serde.ValueSerde, serConfig)
-		serde.MaybeFail("Serializer configuration", err)
-		ser.RegisterTypeFromMessageFactory("DemoSchema", testMessageFactory)
+	ser1, err := NewSerializer(client, serde.ValueSerde, serConfig1)
+	serde.MaybeFail("Serializer configuration", err)
 
-		bytes, err := ser.Serialize("topic1", &obj)
-		serde.MaybeFail("serialization", err)
+	bytes, err := ser1.Serialize("topic1", &widget)
+	serde.MaybeFail("serialization", err)
 
-		// Reset encrypted field
-		obj.OtherField.StringField = "hi"
+	deserConfig1 := NewDeserializerConfig()
+	deserConfig1.UseLatestWithMetadata = map[string]string{
+		"application.version": "v1",
+	}
 
-		deserConfig := NewDeserializerConfig()
-		deserConfig.RuleConfig = map[string]string{
-			"secret": "foo",
-		}
-		deser, err := NewDeserializer(client, serde.ValueSerde, deserConfig)
-		serde.MaybeFail("Deserializer configuration", err)
-		deser.Client = ser.Client
-		deser.MessageFactory = testMessageFactory
-		deser.RegisterTypeFromMessageFactory("DemoSchema", testMessageFactory)
+	deser1, err := NewDeserializer(client, serde.ValueSerde, deserConfig1)
+	serde.MaybeFail("Deserializer configuration", err)
+	deser1.Client = ser1.Client
+	deser1.MessageFactory = testMessageFactory
 
-		newobj, err := deser.Deserialize("topic1", bytes)
-		serde.MaybeFail("deserialization", err, serde.Expect(newobj, &obj))
-
-	*/
+	newobj, err := deser1.Deserialize("topic1", bytes)
+	serde.MaybeFail("deserialization", err, serde.Expect(newobj, &widget))
 }
 
 type DemoSchema struct {
