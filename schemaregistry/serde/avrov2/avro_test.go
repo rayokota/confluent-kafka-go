@@ -626,10 +626,10 @@ func TestAvroSerdeJSONataFullyCompatible(t *testing.T) {
 	serde.MaybeFail = serde.InitFailFunc(t)
 	var err error
 
-	rule1To2 := "$merge([$sift($, function($v, $k) {$k != 'size'}), {'height': $.'size'}])"
-	rule2To1 := "$merge([$sift($, function($v, $k) {$k != 'height'}), {'size': $.'height'}])"
-	rule2To3 := "$merge([$sift($, function($v, $k) {$k != 'height'}), {'length': $.'height'}])"
-	rule3To2 := "$merge([$sift($, function($v, $k) {$k != 'length'}), {'height': $.'length'}])"
+	rule1To2 := "$merge([$sift($, function($v, $k) {$k != 'Size'}), {'Height': $.'Size'}])"
+	rule2To1 := "$merge([$sift($, function($v, $k) {$k != 'Height'}), {'Size': $.'Height'}])"
+	rule2To3 := "$merge([$sift($, function($v, $k) {$k != 'Height'}), {'Length': $.'Height'}])"
+	rule3To2 := "$merge([$sift($, function($v, $k) {$k != 'Length'}), {'Height': $.'Length'}])"
 
 	conf := schemaregistry.NewConfig("mock://")
 
@@ -787,6 +787,41 @@ func TestAvroSerdeJSONataFullyCompatible(t *testing.T) {
 	bytes, err := ser1.Serialize("topic1", &widget)
 	serde.MaybeFail("serialization", err)
 
+	deserializeWithAllVersions(err, client, ser1, bytes, widget, newWidget, newerWidget)
+
+	serConfig2 := NewSerializerConfig()
+	serConfig2.AutoRegisterSchemas = false
+	serConfig2.UseLatestVersion = false
+	serConfig2.UseLatestWithMetadata = map[string]string{
+		"application.version": "v2",
+	}
+
+	ser2, err := NewSerializer(client, serde.ValueSerde, serConfig2)
+	serde.MaybeFail("Serializer configuration", err)
+
+	bytes, err = ser2.Serialize("topic1", &newWidget)
+	serde.MaybeFail("serialization", err)
+
+	deserializeWithAllVersions(err, client, ser2, bytes, widget, newWidget, newerWidget)
+
+	serConfig3 := NewSerializerConfig()
+	serConfig3.AutoRegisterSchemas = false
+	serConfig3.UseLatestVersion = false
+	serConfig3.UseLatestWithMetadata = map[string]string{
+		"application.version": "v3",
+	}
+
+	ser3, err := NewSerializer(client, serde.ValueSerde, serConfig3)
+	serde.MaybeFail("Serializer configuration", err)
+
+	bytes, err = ser3.Serialize("topic1", &newerWidget)
+	serde.MaybeFail("serialization", err)
+
+	deserializeWithAllVersions(err, client, ser3, bytes, widget, newWidget, newerWidget)
+}
+
+func deserializeWithAllVersions(err error, client schemaregistry.Client, ser *Serializer,
+	bytes []byte, widget OldWidget, newWidget NewWidget, newerWidget NewerWidget) {
 	deserConfig1 := NewDeserializerConfig()
 	deserConfig1.UseLatestWithMetadata = map[string]string{
 		"application.version": "v1",
@@ -794,7 +829,7 @@ func TestAvroSerdeJSONataFullyCompatible(t *testing.T) {
 
 	deser1, err := NewDeserializer(client, serde.ValueSerde, deserConfig1)
 	serde.MaybeFail("Deserializer configuration", err)
-	deser1.Client = ser1.Client
+	deser1.Client = ser.Client
 	deser1.MessageFactory = testMessageFactory
 
 	newobj, err := deser1.Deserialize("topic1", bytes)
@@ -807,11 +842,24 @@ func TestAvroSerdeJSONataFullyCompatible(t *testing.T) {
 
 	deser2, err := NewDeserializer(client, serde.ValueSerde, deserConfig2)
 	serde.MaybeFail("Deserializer configuration", err)
-	deser2.Client = ser1.Client
+	deser2.Client = ser.Client
 	deser2.MessageFactory = testMessageFactory
 
 	newobj, err = deser2.Deserialize("topic1", bytes)
 	serde.MaybeFail("deserialization", err, serde.Expect(newobj, &newWidget))
+
+	deserConfig3 := NewDeserializerConfig()
+	deserConfig3.UseLatestWithMetadata = map[string]string{
+		"application.version": "v3",
+	}
+
+	deser3, err := NewDeserializer(client, serde.ValueSerde, deserConfig3)
+	serde.MaybeFail("Deserializer configuration", err)
+	deser3.Client = ser.Client
+	deser3.MessageFactory = testMessageFactory
+
+	newobj, err = deser3.Deserialize("topic1", bytes)
+	serde.MaybeFail("deserialization", err, serde.Expect(newobj, &newerWidget))
 }
 
 type DemoSchema struct {

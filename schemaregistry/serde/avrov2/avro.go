@@ -182,28 +182,43 @@ func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, e
 	if err != nil {
 		return nil, err
 	}
-	var bytes []byte
+	var msg interface{}
 	if len(migrations) > 0 {
-		var msg interface{}
-		err = avro.Unmarshal(writer, payload[5:], msg)
+		err = avro.Unmarshal(writer, payload[5:], &msg)
+		if err != nil {
+			return nil, err
+		}
 		msg, err = s.ExecuteMigrations(migrations, subject, topic, msg)
 		if err != nil {
 			return nil, err
 		}
-		bytes, err = avro.Marshal(writer, msg)
+		var reader avro.Schema
+		reader, name, err = s.toType(s.Client, readerMeta.SchemaInfo)
+		if err != nil {
+			return nil, err
+		}
+		var bytes []byte
+		bytes, err = avro.Marshal(reader, msg)
+		if err != nil {
+			return nil, err
+		}
+		msg, err = s.MessageFactory(subject, name)
+		if err != nil {
+			return nil, err
+		}
+		err = avro.Unmarshal(reader, bytes, msg)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		bytes = payload[5:]
-	}
-	msg, err := s.MessageFactory(subject, name)
-	if err != nil {
-		return nil, err
-	}
-	err = avro.Unmarshal(writer, bytes, msg)
-	if err != nil {
-		return nil, err
+		msg, err = s.MessageFactory(subject, name)
+		if err != nil {
+			return nil, err
+		}
+		err = avro.Unmarshal(writer, payload[5:], msg)
+		if err != nil {
+			return nil, err
+		}
 	}
 	msg, err = s.ExecuteRules(subject, topic, schemaregistry.Read, nil, &info, msg)
 	if err != nil {
