@@ -668,7 +668,8 @@ func (c *mockclient) UpdateDefaultConfig(update ServerConfig) (result ServerConf
 }
 
 // Close closes the client
-func (c *mockclient) Close() {
+func (c *mockclient) Close() error {
+	return nil
 }
 
 func schemasEqual(info1 SchemaInfo, info2 SchemaInfo) bool {

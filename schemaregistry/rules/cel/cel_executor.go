@@ -225,7 +225,8 @@ func (c *Executor) eval(program cel.Program, args map[string]interface{}) (inter
 	return out.ConvertToNative(wantType)
 }
 
-func (c *Executor) Close() {
+func (c *Executor) Close() error {
+	return nil
 }
 
 type ruleWithArgs struct {

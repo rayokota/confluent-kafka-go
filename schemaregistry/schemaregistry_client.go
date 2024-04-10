@@ -368,7 +368,7 @@ type Client interface {
 	UpdateConfig(subject string, update ServerConfig) (result ServerConfig, err error)
 	GetDefaultConfig() (result ServerConfig, err error)
 	UpdateDefaultConfig(update ServerConfig) (result ServerConfig, err error)
-	Close()
+	Close() error
 }
 
 // NewClient returns a Client implementation
@@ -992,7 +992,8 @@ func (c *client) UpdateDefaultConfig(update ServerConfig) (result ServerConfig, 
 }
 
 // Close closes the client
-func (c *client) Close() {
+func (c *client) Close() error {
+	return nil
 }
 
 type evictor struct {

@@ -50,7 +50,7 @@ const MagicByte byte = 0x0
 // MessageFactory is a factory function, which should return a pointer to
 // an instance into which we will unmarshal wire data.
 // For Avro, the name will be the name of the Avro type if it has one.
-// For JSON Schema, the name will be empty.
+// For JSON Schema, the name will be empty/F.
 // For Protobuf, the name will be the name of the message type.
 type MessageFactory func(subject string, name string) (interface{}, error)
 
@@ -60,7 +60,7 @@ type Serializer interface {
 	// Serialize will serialize the given message, which should be a pointer.
 	// For example, in Protobuf, messages are always a pointer to a struct and never just a struct.
 	Serialize(topic string, msg interface{}) ([]byte, error)
-	Close()
+	Close() error
 }
 
 // Deserializer represents a deserializer
@@ -71,7 +71,7 @@ type Deserializer interface {
 	Deserialize(topic string, payload []byte) (interface{}, error)
 	// DeserializeInto will unmarshal data into the given object.
 	DeserializeInto(topic string, payload []byte, msg interface{}) error
-	Close()
+	Close() error
 }
 
 // Serde is a common instance for both the serializers and deserializers
@@ -176,7 +176,7 @@ func (r *RuleContext) LeaveField() {
 type RuleBase interface {
 	Configure(clientConfig *schemaregistry.Config, config map[string]string) error
 	Type() string
-	Close()
+	Close() error
 }
 
 // RuleExecutor represents a rule executor
@@ -285,6 +285,46 @@ const (
 	// TypeNull represents a null
 	TypeNull = 14
 )
+
+func (f *FieldContext) IsPrimitive() bool {
+	t := f.Type
+	return t == TypeString || t == TypeBytes || t == TypeInt || t == TypeLong ||
+		t == TypeFloat || t == TypeDouble || t == TypeBoolean || t == TypeNull
+}
+
+func (f *FieldContext) TypeName() string {
+	switch f.Type {
+	case TypeRecord:
+		return "RECORD"
+	case TypeEnum:
+		return "ENUM"
+	case TypeArray:
+		return "ARRAY"
+	case TypeMap:
+		return "MAP"
+	case TypeCombined:
+		return "COMBINED"
+	case TypeFixed:
+		return "FIXED"
+	case TypeString:
+		return "STRING"
+	case TypeBytes:
+		return "BYTES"
+	case TypeInt:
+		return "INT"
+	case TypeLong:
+		return "LONG"
+	case TypeFloat:
+		return "FLOAT"
+	case TypeDouble:
+		return "DOUBLE"
+	case TypeBoolean:
+		return "BOOLEAN"
+	case TypeNull:
+		return "NULL"
+	}
+	return ""
+}
 
 // RuleAction represents a rule action
 type RuleAction interface {
@@ -744,7 +784,8 @@ func ResolveReferences(c schemaregistry.Client, schema schemaregistry.SchemaInfo
 }
 
 // Close closes the Serde
-func (s *Serde) Close() {
+func (s *Serde) Close() error {
+	return nil
 }
 
 // Configure configures the action
@@ -763,7 +804,8 @@ func (a ErrorAction) Run(ctx RuleContext, msg interface{}, err error) error {
 }
 
 // Close closes the action
-func (a ErrorAction) Close() {
+func (a ErrorAction) Close() error {
+	return nil
 }
 
 // Configure configures the action
@@ -782,5 +824,6 @@ func (a NoneAction) Run(ctx RuleContext, msg interface{}, err error) error {
 }
 
 // Close closes the action
-func (a NoneAction) Close() {
+func (a NoneAction) Close() error {
+	return nil
 }

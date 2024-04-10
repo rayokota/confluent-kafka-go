@@ -81,13 +81,13 @@ func ClearRules() {
 	ruleActionsMu.Lock()
 	defer ruleActionsMu.Unlock()
 	for k, v := range ruleActions {
-		v.Close()
+		_ = v.Close()
 		delete(ruleActions, k)
 	}
 	ruleExecutorsMu.Lock()
 	defer ruleExecutorsMu.Unlock()
 	for k, v := range ruleExecutors {
-		v.Close()
+		_ = v.Close()
 		delete(ruleExecutors, k)
 	}
 }

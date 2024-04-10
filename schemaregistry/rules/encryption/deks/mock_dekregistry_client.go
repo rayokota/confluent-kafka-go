@@ -159,7 +159,7 @@ func (c *mockclient) GetDekVersion(kekName string, subject string, version int, 
 }
 
 // Close closes the client
-func (c *mockclient) Close() {
+func (c *mockclient) Close() error {
 	dekCacheLock.Lock()
 	for k := range dekCache {
 		delete(dekCache, k)
@@ -170,4 +170,5 @@ func (c *mockclient) Close() {
 		delete(kekCache, k)
 	}
 	kekCacheLock.Unlock()
+	return nil
 }

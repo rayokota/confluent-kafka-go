@@ -200,7 +200,7 @@ type Client interface {
 	GetDek(kekName string, subject string, algorithm string, deleted bool) (dek Dek, err error)
 	RegisterDekVersion(kekName string, subject string, version int, algorithm string, encryptedKeyMaterial string) (dek Dek, err error)
 	GetDekVersion(kekName string, subject string, version int, algorithm string, deleted bool) (dek Dek, err error)
-	Close()
+	Close() error
 }
 
 // NewClient returns a Client implementation
@@ -430,5 +430,6 @@ func (c *client) GetDekVersion(kekName string, subject string, version int, algo
 }
 
 // Close closes the client
-func (c *client) Close() {
+func (c *client) Close() error {
+	return nil
 }

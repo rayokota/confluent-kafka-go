@@ -110,8 +110,8 @@ func (f *FieldEncryptionExecutor) NewTransform(ctx serde.RuleContext) (serde.Fie
 	return &transform, nil
 }
 
-func (f *FieldEncryptionExecutor) Close() {
-	f.Client.Close()
+func (f *FieldEncryptionExecutor) Close() error {
+	return f.Client.Close()
 }
 
 type FieldEncryptionExecutorTransform struct {

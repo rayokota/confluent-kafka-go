@@ -65,5 +65,6 @@ func (c *Executor) Transform(ctx serde.RuleContext, msg interface{}) (interface{
 	return res, nil
 }
 
-func (c *Executor) Close() {
+func (c *Executor) Close() error {
+	return nil
 }
