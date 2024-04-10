@@ -547,30 +547,13 @@ func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, e
 	}
 	var migrations []serde.Migration
 	if readerMeta != nil {
-		readerFd, err := s.toFileDesc(s.Client, readerMeta.SchemaInfo)
-		if err != nil {
-			return nil, err
-		}
-		name, err = toMessageName(readerFd, name)
-		if err != nil {
-			return nil, err
-		}
 		migrations, err = s.GetMigrations(subject, topic, &info, readerMeta, payload)
 		if err != nil {
 			return nil, err
 		}
 	}
-	msg, err := s.MessageFactory(subject, name)
-	if err != nil {
-		return nil, err
-	}
+	var msg interface{}
 	var protoMsg proto.Message
-	switch t := msg.(type) {
-	case proto.Message:
-		protoMsg = t
-	default:
-		return nil, fmt.Errorf("deserialization target must be a protobuf message. Got '%v'", t)
-	}
 	if len(migrations) > 0 {
 		dynamicMsg := dynamicpb.NewMessage(messageDesc.UnwrapMessage())
 		err = proto.Unmarshal(payload[5+bytesRead:], dynamicMsg)
@@ -590,15 +573,43 @@ func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, e
 		if err != nil {
 			return nil, err
 		}
+		readerFd, err := s.toFileDesc(s.Client, readerMeta.SchemaInfo)
+		if err != nil {
+			return nil, err
+		}
+		name, err = toMessageName(readerFd, name)
+		if err != nil {
+			return nil, err
+		}
 		jsonBytes, err = json.Marshal(jsonMsg)
 		if err != nil {
 			return nil, err
+		}
+		msg, err = s.MessageFactory(subject, name)
+		if err != nil {
+			return nil, err
+		}
+		switch t := msg.(type) {
+		case proto.Message:
+			protoMsg = t
+		default:
+			return nil, fmt.Errorf("deserialization target must be a protobuf message. Got '%v'", t)
 		}
 		err = protojson.Unmarshal(jsonBytes, protoMsg)
 		if err != nil {
 			return nil, err
 		}
 	} else {
+		msg, err = s.MessageFactory(subject, name)
+		if err != nil {
+			return nil, err
+		}
+		switch t := msg.(type) {
+		case proto.Message:
+			protoMsg = t
+		default:
+			return nil, fmt.Errorf("deserialization target must be a protobuf message. Got '%v'", t)
+		}
 		err = proto.Unmarshal(payload[5+bytesRead:], protoMsg)
 		if err != nil {
 			return nil, err
@@ -612,7 +623,7 @@ func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, e
 	case proto.Message:
 		protoMsg = t
 	default:
-		return nil, fmt.Errorf("serialization target must be a protobuf message. Got '%v'", t)
+		return nil, fmt.Errorf("deserialization target must be a protobuf message. Got '%v'", t)
 	}
 	return protoMsg, err
 }
