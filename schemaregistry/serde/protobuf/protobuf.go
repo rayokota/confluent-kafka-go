@@ -517,6 +517,16 @@ func NewDeserializer(client schemaregistry.Client, serdeType serde.Type, conf *D
 
 // Deserialize implements deserialization of Protobuf data
 func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, error) {
+	return s.deserialize(topic, payload, nil)
+}
+
+// DeserializeInto implements deserialization of Protobuf data to the given object
+func (s *Deserializer) DeserializeInto(topic string, payload []byte, msg interface{}) error {
+	_, err := s.deserialize(topic, payload, msg)
+	return err
+}
+
+func (s *Deserializer) deserialize(topic string, payload []byte, result interface{}) (interface{}, error) {
 	if len(payload) == 0 {
 		return nil, nil
 	}
@@ -585,9 +595,13 @@ func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, e
 		if err != nil {
 			return nil, err
 		}
-		msg, err = s.MessageFactory(subject, name)
-		if err != nil {
-			return nil, err
+		if result == nil {
+			msg, err = s.MessageFactory(subject, name)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			msg = result
 		}
 		switch t := msg.(type) {
 		case proto.Message:
@@ -600,9 +614,13 @@ func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, e
 			return nil, err
 		}
 	} else {
-		msg, err = s.MessageFactory(subject, name)
-		if err != nil {
-			return nil, err
+		if result == nil {
+			msg, err = s.MessageFactory(subject, name)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			msg = result
 		}
 		switch t := msg.(type) {
 		case proto.Message:
@@ -626,45 +644,6 @@ func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, e
 		return nil, fmt.Errorf("deserialization target must be a protobuf message. Got '%v'", t)
 	}
 	return protoMsg, err
-}
-
-// DeserializeInto implements deserialization of Protobuf data to the given object
-func (s *Deserializer) DeserializeInto(topic string, payload []byte, msg interface{}) error {
-	// TODO
-	if len(payload) == 0 {
-		return nil
-	}
-	info, err := s.GetSchema(topic, payload)
-	if err != nil {
-		return err
-	}
-	bytesRead, _, err := readMessageIndexes(payload[5:])
-	if err != nil {
-		return err
-	}
-	subject, err := s.SubjectNameStrategy(topic, s.SerdeType, info)
-	if err != nil {
-		return err
-	}
-	var protoMsg proto.Message
-	switch t := msg.(type) {
-	case proto.Message:
-		protoMsg = t
-	default:
-		return fmt.Errorf("deserialization target must be a protobuf message. Got '%v'", t)
-	}
-	err = proto.Unmarshal(payload[5+bytesRead:], protoMsg)
-	msg, err = s.ExecuteRules(subject, topic, schemaregistry.Read, nil, &info, protoMsg)
-	if err != nil {
-		return err
-	}
-	switch t := msg.(type) {
-	case proto.Message:
-		protoMsg = t
-	default:
-		return fmt.Errorf("serialization target must be a protobuf message. Got '%v'", t)
-	}
-	return nil
 }
 
 func readMessageIndexes(payload []byte) (int, []int, error) {

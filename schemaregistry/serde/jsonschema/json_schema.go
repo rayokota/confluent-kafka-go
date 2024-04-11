@@ -169,6 +169,16 @@ func NewDeserializer(client schemaregistry.Client, serdeType serde.Type, conf *D
 
 // Deserialize implements deserialization of generic data from JSON
 func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, error) {
+	return s.deserialize(topic, payload, nil)
+}
+
+// DeserializeInto implements deserialization of generic data from JSON to the given object
+func (s *Deserializer) DeserializeInto(topic string, payload []byte, msg interface{}) error {
+	_, err := s.deserialize(topic, payload, msg)
+	return err
+}
+
+func (s *Deserializer) deserialize(topic string, payload []byte, result interface{}) (interface{}, error) {
 	if len(payload) == 0 {
 		return nil, nil
 	}
@@ -223,9 +233,13 @@ func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, e
 			return nil, err
 		}
 	}
-	msg, err = s.MessageFactory(subject, "")
-	if err != nil {
-		return nil, err
+	if result == nil {
+		msg, err = s.MessageFactory(subject, "")
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		msg = result
 	}
 	err = json.Unmarshal(bytes, msg)
 	if err != nil {
@@ -236,47 +250,6 @@ func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, e
 		return nil, err
 	}
 	return msg, nil
-}
-
-// DeserializeInto implements deserialization of generic data from JSON to the given object
-func (s *Deserializer) DeserializeInto(topic string, payload []byte, msg interface{}) error {
-	// TODO
-	if len(payload) == 0 {
-		return nil
-	}
-	info, err := s.GetSchema(topic, payload)
-	if err != nil {
-		return err
-	}
-	if s.validate {
-		// Need to unmarshal to pure interface
-		var obj interface{}
-		err = json.Unmarshal(payload[5:], &obj)
-		if err != nil {
-			return err
-		}
-		jschema, err := s.toJSONSchema(s.Client, info)
-		if err != nil {
-			return err
-		}
-		err = jschema.Validate(obj)
-		if err != nil {
-			return err
-		}
-	}
-	subject, err := s.SubjectNameStrategy(topic, s.SerdeType, info)
-	if err != nil {
-		return err
-	}
-	err = json.Unmarshal(payload[5:], msg)
-	if err != nil {
-		return err
-	}
-	msg, err = s.ExecuteRules(subject, topic, schemaregistry.Read, nil, &info, msg)
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
 func (s *Serde) FieldTransform(client schemaregistry.Client, ctx serde.RuleContext, fieldTransform serde.FieldTransform, msg interface{}) (interface{}, error) {

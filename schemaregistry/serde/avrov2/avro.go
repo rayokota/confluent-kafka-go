@@ -156,6 +156,16 @@ func NewDeserializer(client schemaregistry.Client, serdeType serde.Type, conf *D
 
 // Deserialize implements deserialization of generic Avro data
 func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, error) {
+	return s.deserialize(topic, payload, nil)
+}
+
+// DeserializeInto implements deserialization of generic Avro data to the given object
+func (s *Deserializer) DeserializeInto(topic string, payload []byte, msg interface{}) error {
+	_, err := s.deserialize(topic, payload, msg)
+	return err
+}
+
+func (s *Deserializer) deserialize(topic string, payload []byte, result interface{}) (interface{}, error) {
 	if len(payload) == 0 {
 		return nil, nil
 	}
@@ -202,18 +212,26 @@ func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, e
 		if err != nil {
 			return nil, err
 		}
-		msg, err = s.MessageFactory(subject, name)
-		if err != nil {
-			return nil, err
+		if result == nil {
+			msg, err = s.MessageFactory(subject, name)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			msg = result
 		}
 		err = avro.Unmarshal(reader, bytes, msg)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		msg, err = s.MessageFactory(subject, name)
-		if err != nil {
-			return nil, err
+		if result == nil {
+			msg, err = s.MessageFactory(subject, name)
+			if err != nil {
+				return nil, err
+			}
+		} else {
+			msg = result
 		}
 		err = avro.Unmarshal(writer, payload[5:], msg)
 		if err != nil {
@@ -225,32 +243,6 @@ func (s *Deserializer) Deserialize(topic string, payload []byte) (interface{}, e
 		return nil, err
 	}
 	return msg, nil
-}
-
-// DeserializeInto implements deserialization of generic Avro data to the given object
-func (s *Deserializer) DeserializeInto(topic string, payload []byte, msg interface{}) error {
-	// TODO
-	if len(payload) == 0 {
-		return nil
-	}
-	info, err := s.GetSchema(topic, payload)
-	if err != nil {
-		return err
-	}
-	writer, _, err := s.toType(s.Client, info)
-	if err != nil {
-		return err
-	}
-	subject, err := s.SubjectNameStrategy(topic, s.SerdeType, info)
-	if err != nil {
-		return err
-	}
-	err = avro.Unmarshal(writer, payload[5:], msg)
-	if err != nil {
-		return err
-	}
-	msg, err = s.ExecuteRules(subject, topic, schemaregistry.Read, nil, &info, msg)
-	return err
 }
 
 func (s *Serde) RegisterType(name string, msgType interface{}) {
