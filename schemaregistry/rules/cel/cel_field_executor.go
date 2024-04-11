@@ -75,7 +75,7 @@ func (f *FieldExecutorTransform) Transform(ctx serde.RuleContext, fieldCtx serde
 		"value":    fieldValue,
 		"fullName": fieldCtx.FullName,
 		"name":     fieldCtx.Name,
-		"typeName": fieldCtx.Type,
+		"typeName": fieldCtx.TypeName(),
 		"tags":     fieldCtx.Tags,
 		"message":  fieldCtx.ContainingMessage,
 	}

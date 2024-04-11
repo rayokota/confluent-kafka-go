@@ -361,6 +361,92 @@ message Pizza {
 	serde.MaybeFail("serialization", nil, serde.Expect(err, serde.RuleConditionErr{Rule: &encRule}))
 }
 
+func TestProtobufSerdeWithCELFieldTransform(t *testing.T) {
+	serde.MaybeFail = serde.InitFailFunc(t)
+	var err error
+
+	conf := schemaregistry.NewConfig("mock://")
+
+	client, err := schemaregistry.NewClient(conf)
+	serde.MaybeFail("Schema Registry configuration", err)
+
+	serConfig := NewSerializerConfig()
+	serConfig.AutoRegisterSchemas = false
+	serConfig.UseLatestVersion = true
+	ser, err := NewSerializer(client, serde.ValueSerde, serConfig)
+	serde.MaybeFail("Serializer configuration", err)
+
+	raw := `
+syntax = "proto3";
+
+package test;
+option go_package="../test";
+
+import "confluent/meta.proto";
+
+message Author {
+  string name = 1 [
+   (confluent.field_meta).tags = "PII"
+  ];
+  int32 id = 2;
+  repeated string works = 4;
+}
+
+message Pizza {
+  string size = 1;
+  repeated string toppings = 2;
+}
+`
+	encRule := schemaregistry.Rule{
+		Name: "test-cel",
+		Kind: "TRANSFORM",
+		Mode: "WRITE",
+		Type: "CEL_FIELD",
+		Expr: "name == 'name' ; value + '-suffix'",
+	}
+	ruleSet := schemaregistry.RuleSet{
+		DomainRules: []schemaregistry.Rule{encRule},
+	}
+
+	info := schemaregistry.SchemaInfo{
+		Schema:     string(raw),
+		SchemaType: "PROTOBUF",
+		Ruleset:    &ruleSet,
+	}
+
+	id, err := client.Register("topic1-value", info, false)
+	serde.MaybeFail("Schema registration", err)
+	if id <= 0 {
+		t.Errorf("Expected valid schema id, found %d", id)
+	}
+
+	obj := test.Author{
+		Name:  "Kafka",
+		Id:    123,
+		Works: []string{"The Castle", "The Trial"},
+	}
+
+	bytes, err := ser.Serialize("topic1", &obj)
+	serde.MaybeFail("serialization", err)
+
+	deserConfig := NewDeserializerConfig()
+	deser, err := NewDeserializer(client, serde.ValueSerde, deserConfig)
+	serde.MaybeFail("Deserializer configuration", err)
+	deser.Client = ser.Client
+
+	err = deser.ProtoRegistry.RegisterMessage(obj.ProtoReflect().Type())
+	serde.MaybeFail("register message", err)
+
+	obj2 := test.Author{
+		Name:  "Kafka-suffix",
+		Id:    123,
+		Works: []string{"The Castle", "The Trial"},
+	}
+
+	newobj, err := deser.Deserialize("topic1", bytes)
+	serde.MaybeFail("deserialization", err, serde.Expect(newobj.(proto.Message).ProtoReflect(), obj2.ProtoReflect()))
+}
+
 func TestProtobufSerdeEncryption(t *testing.T) {
 	serde.MaybeFail = serde.InitFailFunc(t)
 	var err error
