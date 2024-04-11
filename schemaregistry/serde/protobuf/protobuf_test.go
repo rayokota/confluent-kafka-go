@@ -17,6 +17,7 @@
 package protobuf
 
 import (
+	"errors"
 	_ "github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/rules/cel"
 	_ "github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/rules/encryption/awskms"
 	_ "github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/rules/encryption/azurekms"
@@ -30,6 +31,66 @@ import (
 	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/serde"
 	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/test"
 	"google.golang.org/protobuf/proto"
+)
+
+const (
+	authorSchema = `
+syntax = "proto3";
+
+package test;
+option go_package="../test";
+
+import "confluent/meta.proto";
+
+message Author {
+  string name = 1 [
+   (confluent.field_meta).tags = "PII"
+  ];
+  int32 id = 2;
+  repeated string works = 4;
+}
+
+message Pizza {
+  string size = 1;
+  repeated string toppings = 2;
+}
+`
+	widgetSchema = `
+syntax = "proto3";
+
+package test;
+option go_package="../test";
+
+message Widget {
+    string name = 1;
+    int32 size = 2;
+    int32 version = 3;
+}
+`
+	newWidgetSchema = `
+syntax = "proto3";
+
+package test;
+option go_package="../test";
+
+message NewWidget {
+    string name = 1;
+    int32 height = 2;
+    int32 version = 3;
+}
+`
+	newerWidgetSchema = `
+syntax = "proto3";
+
+package test;
+option go_package="../test";
+
+message NewerWidget {
+    string name = 1;
+    int32 length = 2;
+    int32 version = 3;
+}
+`
 )
 
 func TestProtobufSerdeWithSimple(t *testing.T) {
@@ -212,7 +273,7 @@ func TestProtobufSerdeEmptyMessage(t *testing.T) {
 	serde.MaybeFail("deserialization", err)
 }
 
-func TestProtobufSerdeWithCEL(t *testing.T) {
+func TestProtobufSerdeWithCELCondition(t *testing.T) {
 	serde.MaybeFail = serde.InitFailFunc(t)
 	var err error
 
@@ -227,27 +288,6 @@ func TestProtobufSerdeWithCEL(t *testing.T) {
 	ser, err := NewSerializer(client, serde.ValueSerde, serConfig)
 	serde.MaybeFail("Serializer configuration", err)
 
-	raw := `
-syntax = "proto3";
-
-package test;
-option go_package="../test";
-
-import "confluent/meta.proto";
-
-message Author {
-  string name = 1 [
-   (confluent.field_meta).tags = "PII"
-  ];
-  int32 id = 2;
-  repeated string works = 4;
-}
-
-message Pizza {
-  string size = 1;
-  repeated string toppings = 2;
-}
-`
 	encRule := schemaregistry.Rule{
 		Name: "test-cel",
 		Kind: "CONDITION",
@@ -260,7 +300,7 @@ message Pizza {
 	}
 
 	info := schemaregistry.SchemaInfo{
-		Schema:     string(raw),
+		Schema:     authorSchema,
 		SchemaType: "PROTOBUF",
 		Ruleset:    &ruleSet,
 	}
@@ -292,7 +332,7 @@ message Pizza {
 	serde.MaybeFail("deserialization", err, serde.Expect(newobj.(proto.Message).ProtoReflect(), obj.ProtoReflect()))
 }
 
-func TestProtobufSerdeWithCELFail(t *testing.T) {
+func TestProtobufSerdeWithCELConditionFail(t *testing.T) {
 	serde.MaybeFail = serde.InitFailFunc(t)
 	var err error
 
@@ -307,27 +347,6 @@ func TestProtobufSerdeWithCELFail(t *testing.T) {
 	ser, err := NewSerializer(client, serde.ValueSerde, serConfig)
 	serde.MaybeFail("Serializer configuration", err)
 
-	raw := `
-syntax = "proto3";
-
-package test;
-option go_package="../test";
-
-import "confluent/meta.proto";
-
-message Author {
-  string name = 1 [
-   (confluent.field_meta).tags = "PII"
-  ];
-  int32 id = 2;
-  repeated string works = 4;
-}
-
-message Pizza {
-  string size = 1;
-  repeated string toppings = 2;
-}
-`
 	encRule := schemaregistry.Rule{
 		Name: "test-cel",
 		Kind: "CONDITION",
@@ -340,7 +359,7 @@ message Pizza {
 	}
 
 	info := schemaregistry.SchemaInfo{
-		Schema:     string(raw),
+		Schema:     authorSchema,
 		SchemaType: "PROTOBUF",
 		Ruleset:    &ruleSet,
 	}
@@ -358,7 +377,9 @@ message Pizza {
 	}
 
 	_, err = ser.Serialize("topic1", &obj)
-	serde.MaybeFail("serialization", nil, serde.Expect(err, serde.RuleConditionErr{Rule: &encRule}))
+	var ruleErr serde.RuleConditionErr
+	errors.As(err, &ruleErr)
+	serde.MaybeFail("serialization", nil, serde.Expect(ruleErr, serde.RuleConditionErr{Rule: &encRule}))
 }
 
 func TestProtobufSerdeWithCELFieldTransform(t *testing.T) {
@@ -376,27 +397,6 @@ func TestProtobufSerdeWithCELFieldTransform(t *testing.T) {
 	ser, err := NewSerializer(client, serde.ValueSerde, serConfig)
 	serde.MaybeFail("Serializer configuration", err)
 
-	raw := `
-syntax = "proto3";
-
-package test;
-option go_package="../test";
-
-import "confluent/meta.proto";
-
-message Author {
-  string name = 1 [
-   (confluent.field_meta).tags = "PII"
-  ];
-  int32 id = 2;
-  repeated string works = 4;
-}
-
-message Pizza {
-  string size = 1;
-  repeated string toppings = 2;
-}
-`
 	encRule := schemaregistry.Rule{
 		Name: "test-cel",
 		Kind: "TRANSFORM",
@@ -409,7 +409,7 @@ message Pizza {
 	}
 
 	info := schemaregistry.SchemaInfo{
-		Schema:     string(raw),
+		Schema:     authorSchema,
 		SchemaType: "PROTOBUF",
 		Ruleset:    &ruleSet,
 	}
@@ -447,6 +447,115 @@ message Pizza {
 	serde.MaybeFail("deserialization", err, serde.Expect(newobj.(proto.Message).ProtoReflect(), obj2.ProtoReflect()))
 }
 
+func TestProtobufSerdeWithCELFieldCondition(t *testing.T) {
+	serde.MaybeFail = serde.InitFailFunc(t)
+	var err error
+
+	conf := schemaregistry.NewConfig("mock://")
+
+	client, err := schemaregistry.NewClient(conf)
+	serde.MaybeFail("Schema Registry configuration", err)
+
+	serConfig := NewSerializerConfig()
+	serConfig.AutoRegisterSchemas = false
+	serConfig.UseLatestVersion = true
+	ser, err := NewSerializer(client, serde.ValueSerde, serConfig)
+	serde.MaybeFail("Serializer configuration", err)
+
+	encRule := schemaregistry.Rule{
+		Name: "test-cel",
+		Kind: "CONDITION",
+		Mode: "WRITE",
+		Type: "CEL_FIELD",
+		Expr: "name == 'name' ; value == 'Kafka'",
+	}
+	ruleSet := schemaregistry.RuleSet{
+		DomainRules: []schemaregistry.Rule{encRule},
+	}
+
+	info := schemaregistry.SchemaInfo{
+		Schema:     authorSchema,
+		SchemaType: "PROTOBUF",
+		Ruleset:    &ruleSet,
+	}
+
+	id, err := client.Register("topic1-value", info, false)
+	serde.MaybeFail("Schema registration", err)
+	if id <= 0 {
+		t.Errorf("Expected valid schema id, found %d", id)
+	}
+
+	obj := test.Author{
+		Name:  "Kafka",
+		Id:    123,
+		Works: []string{"The Castle", "The Trial"},
+	}
+
+	bytes, err := ser.Serialize("topic1", &obj)
+	serde.MaybeFail("serialization", err)
+
+	deserConfig := NewDeserializerConfig()
+	deser, err := NewDeserializer(client, serde.ValueSerde, deserConfig)
+	serde.MaybeFail("Deserializer configuration", err)
+	deser.Client = ser.Client
+
+	err = deser.ProtoRegistry.RegisterMessage(obj.ProtoReflect().Type())
+	serde.MaybeFail("register message", err)
+
+	newobj, err := deser.Deserialize("topic1", bytes)
+	serde.MaybeFail("deserialization", err, serde.Expect(newobj.(proto.Message).ProtoReflect(), obj.ProtoReflect()))
+}
+
+func TestProtobufSerdeWithCELFieldConditionFail(t *testing.T) {
+	serde.MaybeFail = serde.InitFailFunc(t)
+	var err error
+
+	conf := schemaregistry.NewConfig("mock://")
+
+	client, err := schemaregistry.NewClient(conf)
+	serde.MaybeFail("Schema Registry configuration", err)
+
+	serConfig := NewSerializerConfig()
+	serConfig.AutoRegisterSchemas = false
+	serConfig.UseLatestVersion = true
+	ser, err := NewSerializer(client, serde.ValueSerde, serConfig)
+	serde.MaybeFail("Serializer configuration", err)
+
+	encRule := schemaregistry.Rule{
+		Name: "test-cel",
+		Kind: "CONDITION",
+		Mode: "WRITE",
+		Type: "CEL_FIELD",
+		Expr: "name == 'name' ; value == 'hi'",
+	}
+	ruleSet := schemaregistry.RuleSet{
+		DomainRules: []schemaregistry.Rule{encRule},
+	}
+
+	info := schemaregistry.SchemaInfo{
+		Schema:     authorSchema,
+		SchemaType: "PROTOBUF",
+		Ruleset:    &ruleSet,
+	}
+
+	id, err := client.Register("topic1-value", info, false)
+	serde.MaybeFail("Schema registration", err)
+	if id <= 0 {
+		t.Errorf("Expected valid schema id, found %d", id)
+	}
+
+	obj := test.Author{
+		Name:  "Kafka",
+		Id:    123,
+		Works: []string{"The Castle", "The Trial"},
+	}
+
+	_, err = ser.Serialize("topic1", &obj)
+	var ruleErr serde.RuleConditionErr
+	errors.As(err, &ruleErr)
+	serde.MaybeFail("serialization", nil, serde.Expect(ruleErr, serde.RuleConditionErr{Rule: &encRule}))
+}
+
 func TestProtobufSerdeEncryption(t *testing.T) {
 	serde.MaybeFail = serde.InitFailFunc(t)
 	var err error
@@ -465,27 +574,6 @@ func TestProtobufSerdeEncryption(t *testing.T) {
 	ser, err := NewSerializer(client, serde.ValueSerde, serConfig)
 	serde.MaybeFail("Serializer configuration", err)
 
-	raw := `
-syntax = "proto3";
-
-package test;
-option go_package="../test";
-
-import "confluent/meta.proto";
-
-message Author {
-  string name = 1 [
-   (confluent.field_meta).tags = "PII"
-  ];
-  int32 id = 2;
-  repeated string works = 4;
-}
-
-message Pizza {
-  string size = 1;
-  repeated string toppings = 2;
-}
-`
 	encRule := schemaregistry.Rule{
 		Name: "test-encrypt",
 		Kind: "TRANSFORM",
@@ -504,7 +592,7 @@ message Pizza {
 	}
 
 	info := schemaregistry.SchemaInfo{
-		Schema:     string(raw),
+		Schema:     authorSchema,
 		SchemaType: "PROTOBUF",
 		Ruleset:    &ruleSet,
 	}
@@ -559,20 +647,8 @@ func TestProtobufSerdeJSONataFullyCompatible(t *testing.T) {
 		Version: 1,
 	}
 
-	raw := `
-syntax = "proto3";
-
-package test;
-option go_package="../test";
-
-message Widget {
-    string name = 1;
-    int32 size = 2;
-    int32 version = 3;
-}
-`
 	info := schemaregistry.SchemaInfo{
-		Schema:     raw,
+		Schema:     widgetSchema,
 		SchemaType: "PROTOBUF",
 		References: nil,
 		Metadata: &schemaregistry.Metadata{
@@ -595,20 +671,8 @@ message Widget {
 		Version: 1,
 	}
 
-	raw = `
-syntax = "proto3";
-
-package test;
-option go_package="../test";
-
-message NewWidget {
-    string name = 1;
-    int32 height = 2;
-    int32 version = 3;
-}
-`
 	info = schemaregistry.SchemaInfo{
-		Schema:     raw,
+		Schema:     newWidgetSchema,
 		SchemaType: "PROTOBUF",
 		References: nil,
 		Metadata: &schemaregistry.Metadata{
@@ -661,21 +725,8 @@ message NewWidget {
 		Version: 1,
 	}
 
-	raw = `
-syntax = "proto3";
-
-package test;
-option go_package="../test";
-
-message NewerWidget {
-    string name = 1;
-    int32 length = 2;
-    int32 version = 3;
-}
-`
-
 	info = schemaregistry.SchemaInfo{
-		Schema:     raw,
+		Schema:     newerWidgetSchema,
 		SchemaType: "PROTOBUF",
 		References: nil,
 		Metadata: &schemaregistry.Metadata{

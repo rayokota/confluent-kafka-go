@@ -123,10 +123,11 @@ func transformField(ctx serde.RuleContext, resolver *avro.TypeResolver, recordSc
 				Rule: ctx.Rule,
 			}
 		}
-	}
-	err = setField(field, newVal)
-	if err != nil {
-		return err
+	} else {
+		err = setField(field, newVal)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }

@@ -673,7 +673,7 @@ func (s *Serde) runAction(ctx RuleContext, ruleMode schemaregistry.RuleMode, rul
 	}
 	e := ruleAction.Run(ctx, msg, err)
 	if e != nil {
-		log.Printf("WARN: could not run post-rule action %s, error: %v", *actionName, e)
+		log.Printf("WARN: could not run post-rule action %s: %v", *actionName, e)
 		return e
 	}
 	return nil
@@ -800,7 +800,7 @@ func (a ErrorAction) Type() string {
 
 // Run runs the action
 func (a ErrorAction) Run(ctx RuleContext, msg interface{}, err error) error {
-	return fmt.Errorf("rule failed: %s, error: %v", ctx.Rule.Name, err)
+	return fmt.Errorf("rule %s failed: %w", ctx.Rule.Name, err)
 }
 
 // Close closes the action

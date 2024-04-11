@@ -125,10 +125,11 @@ func transformField(ctx serde.RuleContext, path string, propName string, val *re
 				Rule: ctx.Rule,
 			}
 		}
-	}
-	err = setField(field, newVal)
-	if err != nil {
-		return err
+	} else {
+		err = setField(field, newVal)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }

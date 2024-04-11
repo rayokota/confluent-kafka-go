@@ -99,8 +99,9 @@ func transformField(ctx serde.RuleContext, fields protoreflect.FieldDescriptors,
 				Rule: ctx.Rule,
 			}
 		}
+	} else {
+		clone.ProtoReflect().Set(fd, newProtoValue)
 	}
-	clone.ProtoReflect().Set(fd, newProtoValue)
 	return nil
 }
 

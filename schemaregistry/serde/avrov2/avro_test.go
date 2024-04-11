@@ -252,7 +252,7 @@ func TestAvroSerdeWithReferences(t *testing.T) {
 	serde.MaybeFail("deserialization", err, serde.Expect(msg, &obj))
 }
 
-func TestAvroSerdeWithCEL(t *testing.T) {
+func TestAvroSerdeWithCELCondition(t *testing.T) {
 	serde.MaybeFail = serde.InitFailFunc(t)
 	var err error
 
@@ -280,7 +280,7 @@ func TestAvroSerdeWithCEL(t *testing.T) {
 
 	info := schemaregistry.SchemaInfo{
 		Schema:     demoSchema,
-		SchemaType: "PROTOBUF",
+		SchemaType: "AVRO",
 		Ruleset:    &ruleSet,
 	}
 
@@ -310,7 +310,7 @@ func TestAvroSerdeWithCEL(t *testing.T) {
 	serde.MaybeFail("deserialization", err, serde.Expect(newobj, &obj))
 }
 
-func TestAvroSerdeWithCELFail(t *testing.T) {
+func TestAvroSerdeWithCELConditionFail(t *testing.T) {
 	serde.MaybeFail = serde.InitFailFunc(t)
 	var err error
 
@@ -338,7 +338,7 @@ func TestAvroSerdeWithCELFail(t *testing.T) {
 
 	info := schemaregistry.SchemaInfo{
 		Schema:     demoSchema,
-		SchemaType: "PROTOBUF",
+		SchemaType: "AVRO",
 		Ruleset:    &ruleSet,
 	}
 
@@ -356,7 +356,9 @@ func TestAvroSerdeWithCELFail(t *testing.T) {
 	obj.BytesField = []byte{1, 2}
 
 	_, err = ser.Serialize("topic1", &obj)
-	serde.MaybeFail("serialization", nil, serde.Expect(err, serde.RuleConditionErr{Rule: &encRule}))
+	var ruleErr serde.RuleConditionErr
+	errors.As(err, &ruleErr)
+	serde.MaybeFail("serialization", nil, serde.Expect(ruleErr, serde.RuleConditionErr{Rule: &encRule}))
 }
 
 func TestAvroSerdeWithCELFieldTransform(t *testing.T) {
@@ -387,7 +389,7 @@ func TestAvroSerdeWithCELFieldTransform(t *testing.T) {
 
 	info := schemaregistry.SchemaInfo{
 		Schema:     demoSchema,
-		SchemaType: "PROTOBUF",
+		SchemaType: "AVRO",
 		Ruleset:    &ruleSet,
 	}
 
@@ -422,6 +424,115 @@ func TestAvroSerdeWithCELFieldTransform(t *testing.T) {
 
 	newobj, err := deser.Deserialize("topic1", bytes)
 	serde.MaybeFail("deserialization", err, serde.Expect(newobj, &obj2))
+}
+
+func TestAvroSerdeWithCELFieldCondition(t *testing.T) {
+	serde.MaybeFail = serde.InitFailFunc(t)
+	var err error
+
+	conf := schemaregistry.NewConfig("mock://")
+
+	client, err := schemaregistry.NewClient(conf)
+	serde.MaybeFail("Schema Registry configuration", err)
+
+	serConfig := NewSerializerConfig()
+	serConfig.AutoRegisterSchemas = false
+	serConfig.UseLatestVersion = true
+	ser, err := NewSerializer(client, serde.ValueSerde, serConfig)
+	serde.MaybeFail("Serializer configuration", err)
+
+	encRule := schemaregistry.Rule{
+		Name: "test-cel",
+		Kind: "CONDITION",
+		Mode: "WRITE",
+		Type: "CEL_FIELD",
+		Expr: "name == 'StringField' ; value == 'hi'",
+	}
+	ruleSet := schemaregistry.RuleSet{
+		DomainRules: []schemaregistry.Rule{encRule},
+	}
+
+	info := schemaregistry.SchemaInfo{
+		Schema:     demoSchema,
+		SchemaType: "AVRO",
+		Ruleset:    &ruleSet,
+	}
+
+	id, err := client.Register("topic1-value", info, false)
+	serde.MaybeFail("Schema registration", err)
+	if id <= 0 {
+		t.Errorf("Expected valid schema id, found %d", id)
+	}
+
+	obj := DemoSchema{}
+	obj.IntField = 123
+	obj.DoubleField = 45.67
+	obj.StringField = "hi"
+	obj.BoolField = true
+	obj.BytesField = []byte{1, 2}
+
+	bytes, err := ser.Serialize("topic1", &obj)
+	serde.MaybeFail("serialization", err)
+
+	deserConfig := NewDeserializerConfig()
+	deser, err := NewDeserializer(client, serde.ValueSerde, deserConfig)
+	serde.MaybeFail("Deserializer configuration", err)
+	deser.Client = ser.Client
+	deser.MessageFactory = testMessageFactory
+
+	newobj, err := deser.Deserialize("topic1", bytes)
+	serde.MaybeFail("deserialization", err, serde.Expect(newobj, &obj))
+}
+
+func TestAvroSerdeWithCELFieldConditionFail(t *testing.T) {
+	serde.MaybeFail = serde.InitFailFunc(t)
+	var err error
+
+	conf := schemaregistry.NewConfig("mock://")
+
+	client, err := schemaregistry.NewClient(conf)
+	serde.MaybeFail("Schema Registry configuration", err)
+
+	serConfig := NewSerializerConfig()
+	serConfig.AutoRegisterSchemas = false
+	serConfig.UseLatestVersion = true
+	ser, err := NewSerializer(client, serde.ValueSerde, serConfig)
+	serde.MaybeFail("Serializer configuration", err)
+
+	encRule := schemaregistry.Rule{
+		Name: "test-cel",
+		Kind: "CONDITION",
+		Mode: "WRITE",
+		Type: "CEL_FIELD",
+		Expr: "name == 'StringField' ; value == 'bye'",
+	}
+	ruleSet := schemaregistry.RuleSet{
+		DomainRules: []schemaregistry.Rule{encRule},
+	}
+
+	info := schemaregistry.SchemaInfo{
+		Schema:     demoSchema,
+		SchemaType: "AVRO",
+		Ruleset:    &ruleSet,
+	}
+
+	id, err := client.Register("topic1-value", info, false)
+	serde.MaybeFail("Schema registration", err)
+	if id <= 0 {
+		t.Errorf("Expected valid schema id, found %d", id)
+	}
+
+	obj := DemoSchema{}
+	obj.IntField = 123
+	obj.DoubleField = 45.67
+	obj.StringField = "hi"
+	obj.BoolField = true
+	obj.BytesField = []byte{1, 2}
+
+	_, err = ser.Serialize("topic1", &obj)
+	var ruleErr serde.RuleConditionErr
+	errors.As(err, &ruleErr)
+	serde.MaybeFail("serialization", nil, serde.Expect(ruleErr, serde.RuleConditionErr{Rule: &encRule}))
 }
 
 func TestAvroSerdeEncryption(t *testing.T) {
