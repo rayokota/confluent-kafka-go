@@ -87,6 +87,35 @@ const (
   ]
 }
 `
+	demoSchemaWithUnion = `
+{
+  "name": "DemoSchemaWithUnion",
+  "type": "record",
+  "fields": [
+    {
+      "name": "IntField",
+      "type": "int"
+    },
+    {
+      "name": "DoubleField",
+      "type": "double"
+    },
+    {
+      "name": "StringField",
+      "type": ["null", "string"],
+      "confluent:tags": [ "PII" ]
+    },
+    {
+      "name": "BoolField",
+      "type": "boolean"
+    },
+    {
+      "name": "BytesField",
+      "type": "bytes"
+    }
+  ]
+}
+`
 )
 
 func testMessageFactory(subject string, name string) (interface{}, error) {
@@ -97,6 +126,8 @@ func testMessageFactory(subject string, name string) (interface{}, error) {
 	switch name {
 	case "DemoSchema":
 		return &DemoSchema{}, nil
+	case "DemoSchemaWithUnion":
+		return &DemoSchemaWithUnion{}, nil
 	case "NestedTestRecord":
 		return &NestedTestRecord{}, nil
 	case "NestedTestPointerRecord":
@@ -798,6 +829,80 @@ func TestAvroSerdeEncryptionWithPointerReferences(t *testing.T) {
 	serde.MaybeFail("deserialization", err, serde.Expect(newobj, &obj))
 }
 
+func TestAvroSerdeEncryptionWithUnion(t *testing.T) {
+	serde.MaybeFail = serde.InitFailFunc(t)
+	var err error
+
+	conf := schemaregistry.NewConfig("mock://")
+
+	client, err := schemaregistry.NewClient(conf)
+	serde.MaybeFail("Schema Registry configuration", err)
+
+	serConfig := NewSerializerConfig()
+	serConfig.AutoRegisterSchemas = false
+	serConfig.UseLatestVersion = true
+	serConfig.RuleConfig = map[string]string{
+		"secret": "foo",
+	}
+	ser, err := NewSerializer(client, serde.ValueSerde, serConfig)
+	serde.MaybeFail("Serializer configuration", err)
+
+	encRule := schemaregistry.Rule{
+		Name: "test-encrypt",
+		Kind: "TRANSFORM",
+		Mode: "WRITEREAD",
+		Type: "ENCRYPT",
+		Tags: []string{"PII"},
+		Params: map[string]string{
+			"encrypt.kek.name":   "kek1",
+			"encrypt.kms.type":   "local-kms",
+			"encrypt.kms.key.id": "mykey",
+		},
+		OnFailure: "ERROR,NONE",
+	}
+	ruleSet := schemaregistry.RuleSet{
+		DomainRules: []schemaregistry.Rule{encRule},
+	}
+
+	info := schemaregistry.SchemaInfo{
+		Schema:     demoSchemaWithUnion,
+		SchemaType: "AVRO",
+		Ruleset:    &ruleSet,
+	}
+
+	id, err := client.Register("topic1-value", info, false)
+	serde.MaybeFail("Schema registration", err)
+	if id <= 0 {
+		t.Errorf("Expected valid schema id, found %d", id)
+	}
+
+	str := "hi"
+	obj := DemoSchemaWithUnion{}
+	obj.IntField = 123
+	obj.DoubleField = 45.67
+	obj.StringField = &str
+	obj.BoolField = true
+	obj.BytesField = []byte{1, 2}
+
+	bytes, err := ser.Serialize("topic1", &obj)
+	serde.MaybeFail("serialization", err)
+
+	// Reset encrypted field
+	obj.StringField = &str
+
+	deserConfig := NewDeserializerConfig()
+	deserConfig.RuleConfig = map[string]string{
+		"secret": "foo",
+	}
+	deser, err := NewDeserializer(client, serde.ValueSerde, deserConfig)
+	serde.MaybeFail("Deserializer configuration", err)
+	deser.Client = ser.Client
+	deser.MessageFactory = testMessageFactory
+
+	newobj, err := deser.Deserialize("topic1", bytes)
+	serde.MaybeFail("deserialization", err, serde.Expect(newobj, &obj))
+}
+
 func TestAvroSerdeJSONataFullyCompatible(t *testing.T) {
 	serde.MaybeFail = serde.InitFailFunc(t)
 	var err error
@@ -1039,11 +1144,25 @@ func deserializeWithAllVersions(err error, client schemaregistry.Client, ser *Se
 }
 
 type DemoSchema struct {
-	IntField int32 `json:"IntField"`
+	IntField int32 `json
+	}:"IntField"`
 
 	DoubleField float64 `json:"DoubleField"`
 
 	StringField string `json:"StringField"`
+
+	BoolField bool `json:"BoolField"`
+
+	BytesField test.Bytes `json:"BytesField"`
+}
+
+type DemoSchemaWithUnion struct {
+	IntField int32 `json
+	}:"IntField"`
+
+	DoubleField float64 `json:"DoubleField"`
+
+	StringField *string `json:"StringField"`
 
 	BoolField bool `json:"BoolField"`
 

@@ -118,7 +118,6 @@ func transformField(ctx serde.RuleContext, path string, propName string, val *re
 		return err
 	}
 	if ctx.Rule.Kind == "CONDITION" {
-		// TODO test
 		newBool := deref(newVal)
 		if newBool.Kind() == reflect.Bool && !newBool.Bool() {
 			return serde.RuleConditionErr{
@@ -228,12 +227,18 @@ func getField(msg *reflect.Value, name string) (*reflect.Value, error) {
 	return &fieldVal, nil
 }
 
+// See https://stackoverflow.com/questions/64138199/how-to-set-a-struct-member-that-is-a-pointer-to-an-arbitrary-value-using-reflect
 func setField(field *reflect.Value, value *reflect.Value) error {
-	v := field
-	if !v.CanSet() {
+	if !field.CanSet() {
 		return fmt.Errorf("cannot assign to the given field")
 	}
-	v.Set(*value)
+	if field.Kind() == reflect.Pointer && value.Kind() != reflect.Pointer {
+		x := reflect.New(field.Type().Elem())
+		x.Elem().Set(*value)
+		field.Set(x)
+	} else {
+		field.Set(*value)
+	}
 	return nil
 }
 

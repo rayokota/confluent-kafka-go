@@ -103,6 +103,10 @@ func (s *Serializer) Serialize(topic string, msg interface{}) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	avroType, _, err = s.toType(s.Client, info)
+	if err != nil {
+		return nil, err
+	}
 	subject, err := s.SubjectNameStrategy(topic, s.SerdeType, info)
 	if err != nil {
 		return nil, err
