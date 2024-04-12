@@ -116,6 +116,33 @@ const (
   ]
 }
 `
+	complexSchema = `
+{
+  "name": "ComplexSchema",
+  "type": "record",
+  "fields": [
+    {
+      "name": "ArrayField",
+      "type": {
+        "type": "array",
+        "items": "string"
+       }
+    },
+    {
+      "name": "MapField",
+      "type": {
+        "type": "map",
+        "values": "string"
+       }
+    },
+    {
+      "name": "UnionField",
+      "type": ["null", "string"],
+      "confluent:tags": [ "PII" ]
+    }
+  ]
+}
+`
 )
 
 func testMessageFactory(subject string, name string) (interface{}, error) {
@@ -128,6 +155,8 @@ func testMessageFactory(subject string, name string) (interface{}, error) {
 		return &DemoSchema{}, nil
 	case "DemoSchemaWithUnion":
 		return &DemoSchemaWithUnion{}, nil
+	case "ComplexSchema":
+		return &ComplexSchema{}, nil
 	case "NestedTestRecord":
 		return &NestedTestRecord{}, nil
 	case "NestedTestPointerRecord":
@@ -452,6 +481,69 @@ func TestAvroSerdeWithCELFieldTransform(t *testing.T) {
 	obj2.StringField = "hi-suffix"
 	obj2.BoolField = true
 	obj2.BytesField = []byte{1, 2}
+
+	newobj, err := deser.Deserialize("topic1", bytes)
+	serde.MaybeFail("deserialization", err, serde.Expect(newobj, &obj2))
+}
+
+func TestAvroSerdeWithCELFieldTransformComplex(t *testing.T) {
+	serde.MaybeFail = serde.InitFailFunc(t)
+	var err error
+
+	conf := schemaregistry.NewConfig("mock://")
+
+	client, err := schemaregistry.NewClient(conf)
+	serde.MaybeFail("Schema Registry configuration", err)
+
+	serConfig := NewSerializerConfig()
+	serConfig.AutoRegisterSchemas = false
+	serConfig.UseLatestVersion = true
+	ser, err := NewSerializer(client, serde.ValueSerde, serConfig)
+	serde.MaybeFail("Serializer configuration", err)
+
+	encRule := schemaregistry.Rule{
+		Name: "test-cel",
+		Kind: "TRANSFORM",
+		Mode: "WRITE",
+		Type: "CEL_FIELD",
+		Expr: "typeName == 'STRING' ; value + '-suffix'",
+	}
+	ruleSet := schemaregistry.RuleSet{
+		DomainRules: []schemaregistry.Rule{encRule},
+	}
+
+	info := schemaregistry.SchemaInfo{
+		Schema:     complexSchema,
+		SchemaType: "AVRO",
+		Ruleset:    &ruleSet,
+	}
+
+	id, err := client.Register("topic1-value", info, false)
+	serde.MaybeFail("Schema registration", err)
+	if id <= 0 {
+		t.Errorf("Expected valid schema id, found %d", id)
+	}
+
+	str := "bye"
+	obj := ComplexSchema{}
+	obj.ArrayField = []string{"hello"}
+	obj.MapField = map[string]string{"key": "world"}
+	obj.UnionField = &str
+
+	bytes, err := ser.Serialize("topic1", &obj)
+	serde.MaybeFail("serialization", err)
+
+	deserConfig := NewDeserializerConfig()
+	deser, err := NewDeserializer(client, serde.ValueSerde, deserConfig)
+	serde.MaybeFail("Deserializer configuration", err)
+	deser.Client = ser.Client
+	deser.MessageFactory = testMessageFactory
+
+	str2 := "bye-suffix"
+	obj2 := ComplexSchema{}
+	obj2.ArrayField = []string{"hello-suffix"}
+	obj2.MapField = map[string]string{"key": "world-suffix"}
+	obj2.UnionField = &str2
 
 	newobj, err := deser.Deserialize("topic1", bytes)
 	serde.MaybeFail("deserialization", err, serde.Expect(newobj, &obj2))
@@ -1144,8 +1236,7 @@ func deserializeWithAllVersions(err error, client schemaregistry.Client, ser *Se
 }
 
 type DemoSchema struct {
-	IntField int32 `json
-	}:"IntField"`
+	IntField int32 `json:"IntField"`
 
 	DoubleField float64 `json:"DoubleField"`
 
@@ -1157,8 +1248,7 @@ type DemoSchema struct {
 }
 
 type DemoSchemaWithUnion struct {
-	IntField int32 `json
-	}:"IntField"`
+	IntField int32 `json:"IntField"`
 
 	DoubleField float64 `json:"DoubleField"`
 
@@ -1167,6 +1257,14 @@ type DemoSchemaWithUnion struct {
 	BoolField bool `json:"BoolField"`
 
 	BytesField test.Bytes `json:"BytesField"`
+}
+
+type ComplexSchema struct {
+	ArrayField []string `json:"ArrayField"`
+
+	MapField map[string]string `json:"DoubleField"`
+
+	UnionField *string `json:"StringField"`
 }
 
 type NestedTestRecord struct {

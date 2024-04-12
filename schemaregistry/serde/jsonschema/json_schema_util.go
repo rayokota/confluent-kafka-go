@@ -139,7 +139,7 @@ func transformArray(ctx serde.RuleContext, msg *reflect.Value, sch *jsonschema2.
 	if val.Kind() != reflect.Slice {
 		return msg, nil
 	}
-	for i := 1; i < val.Len(); i++ {
+	for i := 0; i < val.Len(); i++ {
 		item := val.Index(i)
 		newVal, err := transform(ctx, sch, path, &item, fieldTransform)
 		if err != nil {

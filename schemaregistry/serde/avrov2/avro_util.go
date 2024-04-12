@@ -47,9 +47,10 @@ func transform(ctx serde.RuleContext, resolver *avro.TypeResolver, schema avro.S
 		if val.Kind() != reflect.Slice {
 			return msg, nil
 		}
-		for i := 1; i < val.Len(); i++ {
+		subschema := schema.(*avro.ArraySchema).Items()
+		for i := 0; i < val.Len(); i++ {
 			item := val.Index(i)
-			newVal, err := transform(ctx, resolver, schema, &item, fieldTransform)
+			newVal, err := transform(ctx, resolver, subschema, &item, fieldTransform)
 			if err != nil {
 				return nil, err
 			}
@@ -61,11 +62,12 @@ func transform(ctx serde.RuleContext, resolver *avro.TypeResolver, schema avro.S
 		if val.Kind() != reflect.Map {
 			return msg, nil
 		}
-		iter := reflect.ValueOf(val).MapRange()
+		subschema := schema.(*avro.MapSchema).Values()
+		iter := val.MapRange()
 		for iter.Next() {
 			k := iter.Key()
 			v := iter.Value()
-			newVal, err := transform(ctx, resolver, schema, &v, fieldTransform)
+			newVal, err := transform(ctx, resolver, subschema, &v, fieldTransform)
 			if err != nil {
 				return nil, err
 			}
