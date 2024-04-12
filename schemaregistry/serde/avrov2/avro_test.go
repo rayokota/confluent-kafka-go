@@ -30,7 +30,6 @@ import (
 
 	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry"
 	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/serde"
-	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/test"
 )
 
 const (
@@ -70,7 +69,8 @@ const (
     },
     {
       "name": "BytesField",
-      "type": "bytes"
+      "type": "bytes",
+      "confluent:tags": [ "PII" ]
     }
   ]
 } 
@@ -111,7 +111,8 @@ const (
     },
     {
       "name": "BytesField",
-      "type": "bytes"
+      "type": ["null", "bytes"],
+      "confluent:tags": [ "PII" ]
     }
   ]
 }
@@ -778,6 +779,7 @@ func TestAvroSerdeEncryption(t *testing.T) {
 
 	// Reset encrypted field
 	obj.StringField = "hi"
+	obj.BytesField = []byte{1, 2}
 
 	deserConfig := NewDeserializerConfig()
 	deserConfig.RuleConfig = map[string]string{
@@ -872,6 +874,7 @@ func TestAvroSerdeEncryptionWithReferences(t *testing.T) {
 
 	// Reset encrypted field
 	obj.OtherField.StringField = "hi"
+	obj.OtherField.BytesField = []byte{1, 2}
 
 	deserConfig := NewDeserializerConfig()
 	deserConfig.RuleConfig = map[string]string{
@@ -967,6 +970,7 @@ func TestAvroSerdeEncryptionWithPointerReferences(t *testing.T) {
 
 	// Reset encrypted field
 	obj.OtherField.StringField = "hi"
+	obj.OtherField.BytesField = []byte{1, 2}
 
 	deserConfig := NewDeserializerConfig()
 	deserConfig.RuleConfig = map[string]string{
@@ -1030,18 +1034,20 @@ func TestAvroSerdeEncryptionWithUnion(t *testing.T) {
 	}
 
 	str := "hi"
+	b := []byte{1, 2}
 	obj := DemoSchemaWithUnion{}
 	obj.IntField = 123
 	obj.DoubleField = 45.67
 	obj.StringField = &str
 	obj.BoolField = true
-	obj.BytesField = []byte{1, 2}
+	obj.BytesField = &b
 
 	bytes, err := ser.Serialize("topic1", &obj)
 	serde.MaybeFail("serialization", err)
 
 	// Reset encrypted field
 	obj.StringField = &str
+	obj.BytesField = &b
 
 	deserConfig := NewDeserializerConfig()
 	deserConfig.RuleConfig = map[string]string{
@@ -1305,7 +1311,7 @@ type DemoSchema struct {
 
 	BoolField bool `json:"BoolField"`
 
-	BytesField test.Bytes `json:"BytesField"`
+	BytesField []byte `json:"BytesField"`
 }
 
 type DemoSchemaWithUnion struct {
@@ -1317,7 +1323,7 @@ type DemoSchemaWithUnion struct {
 
 	BoolField bool `json:"BoolField"`
 
-	BytesField test.Bytes `json:"BytesField"`
+	BytesField *[]byte `json:"BytesField"`
 }
 
 type ComplexSchema struct {

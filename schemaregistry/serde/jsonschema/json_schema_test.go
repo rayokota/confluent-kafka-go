@@ -17,6 +17,7 @@
 package jsonschema
 
 import (
+	"encoding/base64"
 	"errors"
 	_ "github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/rules/cel"
 	_ "github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/rules/encryption/awskms"
@@ -33,7 +34,6 @@ import (
 
 	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry"
 	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/serde"
-	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry/test"
 )
 
 const (
@@ -57,8 +57,9 @@ const (
     },
     "BoolField": { "type": "boolean" },
     "BytesField": { 
-        "type": "string",
-        "contentEncoding": "base64"
+       "type": "string",
+       "contentEncoding": "base64",
+       "confluent:tags": [ "PII" ]
     }
   }
 }
@@ -82,8 +83,9 @@ const (
     },
     "BoolField": { "type": "boolean" },
     "BytesField": { 
-        "type": "string",
-        "contentEncoding": "base64"
+       "type": "string",
+       "contentEncoding": "base64",
+       "confluent:tags": [ "PII" ]
     }
   }
 }
@@ -187,7 +189,7 @@ func TestJSONSchemaSerdeWithSimple(t *testing.T) {
 	obj.DoubleField = 45.67
 	obj.StringField = "hi"
 	obj.BoolField = true
-	obj.BytesField = []byte{0, 0, 0, 1}
+	obj.BytesField = base64.StdEncoding.EncodeToString([]byte{0, 0, 0, 1})
 	bytes, err := ser.Serialize("topic1", &obj)
 	serde.MaybeFail("serialization", err)
 
@@ -216,7 +218,7 @@ func TestJSONSchemaSerdeWithNested(t *testing.T) {
 	nested.DoubleField = 45.67
 	nested.StringField = "hi"
 	nested.BoolField = true
-	nested.BytesField = []byte{0, 0, 0, 1}
+	nested.BytesField = base64.StdEncoding.EncodeToString([]byte{0, 0, 0, 1})
 	obj := JSONNestedTestRecord{
 		OtherField: nested,
 	}
@@ -318,7 +320,7 @@ func TestJSONSchemaSerdeWithCELCondition(t *testing.T) {
 	obj.DoubleField = 45.67
 	obj.StringField = "hi"
 	obj.BoolField = true
-	obj.BytesField = []byte{1, 2}
+	obj.BytesField = base64.StdEncoding.EncodeToString([]byte{1, 2})
 
 	bytes, err := ser.Serialize("topic1", &obj)
 	serde.MaybeFail("serialization", err)
@@ -376,7 +378,7 @@ func TestJSONSchemaSerdeWithCELConditionFail(t *testing.T) {
 	obj.DoubleField = 45.67
 	obj.StringField = "hi"
 	obj.BoolField = true
-	obj.BytesField = []byte{1, 2}
+	obj.BytesField = base64.StdEncoding.EncodeToString([]byte{1, 2})
 
 	_, err = ser.Serialize("topic1", &obj)
 	var ruleErr serde.RuleConditionErr
@@ -427,7 +429,7 @@ func TestJSONSchemaSerdeWithCELFieldTransform(t *testing.T) {
 	obj.DoubleField = 45.67
 	obj.StringField = "hi"
 	obj.BoolField = true
-	obj.BytesField = []byte{1, 2}
+	obj.BytesField = base64.StdEncoding.EncodeToString([]byte{1, 2})
 
 	bytes, err := ser.Serialize("topic1", &obj)
 	serde.MaybeFail("serialization", err)
@@ -442,7 +444,7 @@ func TestJSONSchemaSerdeWithCELFieldTransform(t *testing.T) {
 	obj2.DoubleField = 45.67
 	obj2.StringField = "hi-suffix"
 	obj2.BoolField = true
-	obj2.BytesField = []byte{1, 2}
+	obj2.BytesField = base64.StdEncoding.EncodeToString([]byte{1, 2})
 
 	var newobj JSONDemoSchema
 	err = deser.DeserializeInto("topic1", bytes, &newobj)
@@ -616,7 +618,7 @@ func TestJSONSchemaSerdeWithCELFieldCondition(t *testing.T) {
 	obj.DoubleField = 45.67
 	obj.StringField = "hi"
 	obj.BoolField = true
-	obj.BytesField = []byte{1, 2}
+	obj.BytesField = base64.StdEncoding.EncodeToString([]byte{1, 2})
 
 	bytes, err := ser.Serialize("topic1", &obj)
 	serde.MaybeFail("serialization", err)
@@ -674,7 +676,7 @@ func TestJSONSchemaSerdeWithCELFieldConditionFail(t *testing.T) {
 	obj.DoubleField = 45.67
 	obj.StringField = "hi"
 	obj.BoolField = true
-	obj.BytesField = []byte{1, 2}
+	obj.BytesField = base64.StdEncoding.EncodeToString([]byte{1, 2})
 
 	_, err = ser.Serialize("topic1", &obj)
 	var ruleErr serde.RuleConditionErr
@@ -734,13 +736,14 @@ func TestJSONSchemaSerdeEncryption(t *testing.T) {
 	obj.DoubleField = 45.67
 	obj.StringField = "hi"
 	obj.BoolField = true
-	obj.BytesField = []byte{1, 2}
+	obj.BytesField = base64.StdEncoding.EncodeToString([]byte{1, 2})
 
 	bytes, err := ser.Serialize("topic1", &obj)
 	serde.MaybeFail("serialization", err)
 
 	// Reset encrypted field
 	obj.StringField = "hi"
+	obj.BytesField = base64.StdEncoding.EncodeToString([]byte{1, 2})
 
 	deserConfig := NewDeserializerConfig()
 	deserConfig.RuleConfig = map[string]string{
@@ -807,13 +810,14 @@ func TestJSONSchemaSerdeEncryptionWithUnion(t *testing.T) {
 	obj.DoubleField = 45.67
 	obj.StringField = "hi"
 	obj.BoolField = true
-	obj.BytesField = []byte{1, 2}
+	obj.BytesField = base64.StdEncoding.EncodeToString([]byte{1, 2})
 
 	bytes, err := ser.Serialize("topic1", &obj)
 	serde.MaybeFail("serialization", err)
 
 	// Reset encrypted field
 	obj.StringField = "hi"
+	obj.BytesField = base64.StdEncoding.EncodeToString([]byte{1, 2})
 
 	deserConfig := NewDeserializerConfig()
 	deserConfig.RuleConfig = map[string]string{
@@ -898,7 +902,7 @@ func TestJSONSchemaSerdeEncryptionWithReferences(t *testing.T) {
 	nested.DoubleField = 45.67
 	nested.StringField = "hi"
 	nested.BoolField = true
-	nested.BytesField = []byte{1, 2}
+	nested.BytesField = base64.StdEncoding.EncodeToString([]byte{1, 2})
 	obj := JSONNestedTestRecord{}
 	obj.OtherField = nested
 
@@ -907,6 +911,7 @@ func TestJSONSchemaSerdeEncryptionWithReferences(t *testing.T) {
 
 	// Reset encrypted field
 	obj.OtherField.StringField = "hi"
+	obj.OtherField.BytesField = base64.StdEncoding.EncodeToString([]byte{1, 2})
 
 	deserConfig := NewDeserializerConfig()
 	deserConfig.RuleConfig = map[string]string{
@@ -1166,7 +1171,7 @@ type DifferentJSONDemoSchema struct {
 
 	BoolFieldThatsActuallyString string `json:"BoolField"`
 
-	BytesField test.Bytes `json:"BytesField"`
+	BytesField string `json:"BytesField"`
 }
 
 type JSONDemoSchema struct {
@@ -1178,7 +1183,7 @@ type JSONDemoSchema struct {
 
 	BoolField bool `json:"BoolField"`
 
-	BytesField test.Bytes `json:"BytesField"`
+	BytesField string `json:"BytesField"`
 }
 
 type JSONComplexSchema struct {

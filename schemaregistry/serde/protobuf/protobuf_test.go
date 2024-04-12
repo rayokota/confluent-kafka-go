@@ -47,6 +47,9 @@ message Author {
    (confluent.field_meta).tags = "PII"
   ];
   int32 id = 2;
+  bytes picture = 3 [
+   (confluent.field_meta).tags = "PII"
+  ];
   repeated string works = 4;
 }
 
@@ -312,9 +315,10 @@ func TestProtobufSerdeWithCELCondition(t *testing.T) {
 	}
 
 	obj := test.Author{
-		Name:  "Kafka",
-		Id:    123,
-		Works: []string{"The Castle", "The Trial"},
+		Name:    "Kafka",
+		Id:      123,
+		Picture: []byte{1, 2},
+		Works:   []string{"The Castle", "The Trial"},
 	}
 
 	bytes, err := ser.Serialize("topic1", &obj)
@@ -371,9 +375,10 @@ func TestProtobufSerdeWithCELConditionFail(t *testing.T) {
 	}
 
 	obj := test.Author{
-		Name:  "Kafka",
-		Id:    123,
-		Works: []string{"The Castle", "The Trial"},
+		Name:    "Kafka",
+		Id:      123,
+		Picture: []byte{1, 2},
+		Works:   []string{"The Castle", "The Trial"},
 	}
 
 	_, err = ser.Serialize("topic1", &obj)
@@ -421,9 +426,10 @@ func TestProtobufSerdeWithCELFieldTransform(t *testing.T) {
 	}
 
 	obj := test.Author{
-		Name:  "Kafka",
-		Id:    123,
-		Works: []string{"The Castle", "The Trial"},
+		Name:    "Kafka",
+		Id:      123,
+		Picture: []byte{1, 2},
+		Works:   []string{"The Castle", "The Trial"},
 	}
 
 	bytes, err := ser.Serialize("topic1", &obj)
@@ -438,9 +444,10 @@ func TestProtobufSerdeWithCELFieldTransform(t *testing.T) {
 	serde.MaybeFail("register message", err)
 
 	obj2 := test.Author{
-		Name:  "Kafka-suffix",
-		Id:    123,
-		Works: []string{"The Castle", "The Trial"},
+		Name:    "Kafka-suffix",
+		Id:      123,
+		Picture: []byte{1, 2},
+		Works:   []string{"The Castle", "The Trial"},
 	}
 
 	newobj, err := deser.Deserialize("topic1", bytes)
@@ -486,9 +493,10 @@ func TestProtobufSerdeWithCELFieldCondition(t *testing.T) {
 	}
 
 	obj := test.Author{
-		Name:  "Kafka",
-		Id:    123,
-		Works: []string{"The Castle", "The Trial"},
+		Name:    "Kafka",
+		Id:      123,
+		Picture: []byte{1, 2},
+		Works:   []string{"The Castle", "The Trial"},
 	}
 
 	bytes, err := ser.Serialize("topic1", &obj)
@@ -545,9 +553,10 @@ func TestProtobufSerdeWithCELFieldConditionFail(t *testing.T) {
 	}
 
 	obj := test.Author{
-		Name:  "Kafka",
-		Id:    123,
-		Works: []string{"The Castle", "The Trial"},
+		Name:    "Kafka",
+		Id:      123,
+		Picture: []byte{1, 2},
+		Works:   []string{"The Castle", "The Trial"},
 	}
 
 	_, err = ser.Serialize("topic1", &obj)
@@ -604,9 +613,10 @@ func TestProtobufSerdeEncryption(t *testing.T) {
 	}
 
 	obj := test.Author{
-		Name:  "Kafka",
-		Id:    123,
-		Works: []string{"The Castle", "The Trial"},
+		Name:    "Kafka",
+		Id:      123,
+		Picture: []byte{1, 2},
+		Works:   []string{"The Castle", "The Trial"},
 	}
 
 	bytes, err := ser.Serialize("topic1", &obj)
