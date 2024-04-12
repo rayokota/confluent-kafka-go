@@ -549,6 +549,67 @@ func TestAvroSerdeWithCELFieldTransformComplex(t *testing.T) {
 	serde.MaybeFail("deserialization", err, serde.Expect(newobj, &obj2))
 }
 
+func TestAvroSerdeWithCELFieldTransformComplexWithNil(t *testing.T) {
+	serde.MaybeFail = serde.InitFailFunc(t)
+	var err error
+
+	conf := schemaregistry.NewConfig("mock://")
+
+	client, err := schemaregistry.NewClient(conf)
+	serde.MaybeFail("Schema Registry configuration", err)
+
+	serConfig := NewSerializerConfig()
+	serConfig.AutoRegisterSchemas = false
+	serConfig.UseLatestVersion = true
+	ser, err := NewSerializer(client, serde.ValueSerde, serConfig)
+	serde.MaybeFail("Serializer configuration", err)
+
+	encRule := schemaregistry.Rule{
+		Name: "test-cel",
+		Kind: "TRANSFORM",
+		Mode: "WRITE",
+		Type: "CEL_FIELD",
+		Expr: "typeName == 'STRING' ; value + '-suffix'",
+	}
+	ruleSet := schemaregistry.RuleSet{
+		DomainRules: []schemaregistry.Rule{encRule},
+	}
+
+	info := schemaregistry.SchemaInfo{
+		Schema:     complexSchema,
+		SchemaType: "AVRO",
+		Ruleset:    &ruleSet,
+	}
+
+	id, err := client.Register("topic1-value", info, false)
+	serde.MaybeFail("Schema registration", err)
+	if id <= 0 {
+		t.Errorf("Expected valid schema id, found %d", id)
+	}
+
+	obj := ComplexSchema{}
+	obj.ArrayField = []string{"hello"}
+	obj.MapField = map[string]string{"key": "world"}
+	obj.UnionField = nil
+
+	bytes, err := ser.Serialize("topic1", &obj)
+	serde.MaybeFail("serialization", err)
+
+	deserConfig := NewDeserializerConfig()
+	deser, err := NewDeserializer(client, serde.ValueSerde, deserConfig)
+	serde.MaybeFail("Deserializer configuration", err)
+	deser.Client = ser.Client
+	deser.MessageFactory = testMessageFactory
+
+	obj2 := ComplexSchema{}
+	obj2.ArrayField = []string{"hello-suffix"}
+	obj2.MapField = map[string]string{"key": "world-suffix"}
+	obj2.UnionField = nil
+
+	newobj, err := deser.Deserialize("topic1", bytes)
+	serde.MaybeFail("deserialization", err, serde.Expect(newobj, &obj2))
+}
+
 func TestAvroSerdeWithCELFieldCondition(t *testing.T) {
 	serde.MaybeFail = serde.InitFailFunc(t)
 	var err error

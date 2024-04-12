@@ -27,7 +27,7 @@ import (
 
 func transform(ctx serde.RuleContext, resolver *avro.TypeResolver, schema avro.Schema, msg *reflect.Value,
 	fieldTransform serde.FieldTransform) (*reflect.Value, error) {
-	if schema == nil {
+	if msg == nil || (msg.Kind() == reflect.Pointer && msg.IsNil()) || schema == nil {
 		return msg, nil
 	}
 	fieldCtx := ctx.CurrentField()
@@ -75,9 +75,6 @@ func transform(ctx serde.RuleContext, resolver *avro.TypeResolver, schema avro.S
 		}
 		return msg, nil
 	case *avro.RecordSchema:
-		if msg == nil {
-			return msg, nil
-		}
 		val := deref(msg)
 		recordSchema := schema.(*avro.RecordSchema)
 		for _, f := range recordSchema.Fields() {
@@ -212,12 +209,17 @@ func setField(field *reflect.Value, value *reflect.Value) error {
 
 func resolveUnion(resolver *avro.TypeResolver, schema avro.Schema, msg *reflect.Value) (avro.Schema, error) {
 	union := schema.(*avro.UnionSchema)
-	// TODO test
-	val := msg.Interface()
-	typ := reflect2.TypeOf(val)
-	names, err := resolver.Name(typ)
-	if err != nil {
-		return nil, err
+	var names []string
+	var err error
+	if msg.IsValid() && msg.CanInterface() {
+		val := msg.Interface()
+		typ := reflect2.TypeOf(val)
+		names, err = resolver.Name(typ)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		names = []string{"null"}
 	}
 	for _, name := range names {
 		if idx := strings.Index(name, ":"); idx > 0 {

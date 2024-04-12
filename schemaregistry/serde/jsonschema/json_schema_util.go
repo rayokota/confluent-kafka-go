@@ -26,7 +26,7 @@ import (
 
 func transform(ctx serde.RuleContext, schema *jsonschema2.Schema, path string, msg *reflect.Value,
 	fieldTransform serde.FieldTransform) (*reflect.Value, error) {
-	if schema == nil {
+	if msg == nil || (msg.Kind() == reflect.Pointer && msg.IsNil()) || schema == nil {
 		return msg, nil
 	}
 	fieldCtx := ctx.CurrentField()
@@ -243,17 +243,19 @@ func setField(field *reflect.Value, value *reflect.Value) error {
 }
 
 func validate(schema *jsonschema2.Schema, msg *reflect.Value) (bool, error) {
-	raw, err := json.Marshal(msg.Interface())
-	if err != nil {
-		return false, err
-	}
-	// Need to unmarshal to pure interface
 	var obj interface{}
-	err = json.Unmarshal(raw, &obj)
-	if err != nil {
-		return false, err
+	if msg.IsValid() && msg.CanInterface() {
+		raw, err := json.Marshal(msg.Interface())
+		if err != nil {
+			return false, err
+		}
+		// Need to unmarshal to pure interface
+		err = json.Unmarshal(raw, &obj)
+		if err != nil {
+			return false, err
+		}
 	}
-	err = schema.Validate(obj)
+	err := schema.Validate(obj)
 	if err != nil {
 		return false, nil
 	}

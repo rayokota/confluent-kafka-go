@@ -26,11 +26,10 @@ import (
 
 func transform(ctx serde.RuleContext, descriptor protoreflect.Descriptor, msg interface{},
 	fieldTransform serde.FieldTransform) (interface{}, error) {
-
-	v := reflect.ValueOf(msg)
-	if descriptor == nil {
+	if msg == nil || descriptor == nil {
 		return msg, nil
 	}
+	v := reflect.ValueOf(msg)
 	if v.Kind() == reflect.Slice {
 		var result []interface{}
 		for i := 0; i < v.Len(); i++ {
@@ -61,7 +60,7 @@ func transform(ctx serde.RuleContext, descriptor protoreflect.Descriptor, msg in
 	fieldCtx := ctx.CurrentField()
 	if fieldCtx != nil {
 		ruleTags := ctx.Rule.Tags
-		if (ruleTags == nil && len(ruleTags) == 0) || !disjoint(ruleTags, fieldCtx.Tags) {
+		if (len(ruleTags) == 0) || !disjoint(ruleTags, fieldCtx.Tags) {
 			val := msg.(protoreflect.Value)
 			newVal, err := fieldTransform.Transform(ctx, *fieldCtx, val.Interface())
 			if err != nil {
